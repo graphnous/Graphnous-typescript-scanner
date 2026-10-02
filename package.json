@@ -8,7 +8,7 @@
     "dev": "tsx src/main.ts",
     "build": "tsc && esbuild dist/main.js --bundle --platform=node --outfile=build/scanner.js",
     "start": "node dist/main.js",
-    "generate": "json2ts -i ../graphnous-schemas/scan/scan-result.schema.json -o src/generated/ScanResult.ts",
+    "generate": "node scripts/generate.mjs",
     "test": "tsx --test test/*.test.ts"
   },
   "devDependencies": {
