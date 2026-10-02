@@ -5,10 +5,14 @@
  * and run json-schema-to-typescript to regenerate this file.
  */
 
+/**
+ * A modifier as declared, or the visibility a language gives through other means. Go reports PUBLIC for exported names. Rust reports PUBLIC for pub and INTERNAL for pub(crate). DEFAULT is a Java default method; EXPORT and EXPORT_DEFAULT are TypeScript and JavaScript export and export default. Python reports STATIC and ABSTRACT for @staticmethod and @abstractmethod, and the decorators as annotations.
+ */
 export type Modifier =
   | "PUBLIC"
   | "PROTECTED"
   | "PRIVATE"
+  | "INTERNAL"
   | "STATIC"
   | "FINAL"
   | "ABSTRACT"
@@ -19,10 +23,18 @@ export type Modifier =
   | "TRANSIENT"
   | "VOLATILE"
   | "NATIVE"
-  | "STRICTFP";
+  | "STRICTFP"
+  | "ASYNC"
+  | "EXPORT"
+  | "EXPORT_DEFAULT"
+  | "READONLY"
+  | "OVERRIDE"
+  | "CONST"
+  | "MUTABLE"
+  | "UNSAFE";
 
 /**
- * Result produced by a GraphNous scanner for a single scan target.
+ * Result produced by a GraphNous scanner for a single scan target. Qualified names identify declarations across the result, so calls, field accesses and type references can be linked to them. They follow the conventions of each language: Java uses package and class names, and methods add their parameter types, e.g. "com.example.Orders.find(java.lang.String)". TypeScript and JavaScript use the file path relative to the target without its extension, a colon, then the dotted name, e.g. "src/orders:Orders.find". Python uses the dotted module path, e.g. "app.orders.Orders.find". Go uses the package import path, then the dotted name, e.g. "example.com/app/orders.Orders.Find". Rust uses the module path, e.g. "orders::Orders::find" in the crate being scanned. Only Java names include parameter types, as the other languages have no overloading.
  */
 export interface GraphNousScanResult {
   format: "graphnous-scan-result";
@@ -34,7 +46,7 @@ export interface ScanTarget {
   path: string;
   language: "JAVA" | "TYPESCRIPT" | "JAVASCRIPT" | "PYTHON" | "GO" | "RUST";
   languageVersion: string;
-  buildSystem?: "MAVEN" | "GRADLE" | "NPM" | "PNPM" | "YARN";
+  buildSystem?: "MAVEN" | "GRADLE" | "NPM" | "PNPM" | "YARN" | "BUN" | "PIP" | "POETRY" | "UV" | "GO" | "CARGO";
   buildSystemVersion?: string;
 }
 export interface Module {
@@ -53,12 +65,95 @@ export interface File {
   sourceSet?: "MAIN" | "TEST";
   size?: number;
   checksum?: string;
+  /**
+   * The number of lines in the file. A file starts on line 1 and ends on line lineCount.
+   */
+  lineCount?: number;
+  /**
+   * The qualified name of the package the file declares or belongs to, as in Package.qualifiedName. Absent for the Java default package and for languages without packages.
+   */
+  package?: string;
+  imports?: Import[];
+  /**
+   * The top-level classes, interfaces, enums, structs, traits and type aliases declared in the file. Nested ones are listed under the class that encloses them.
+   */
   classes?: Class[];
+  /**
+   * The functions declared at the top level of the file, outside any class, with kind FUNCTION. Go methods with a receiver and Rust methods in impl blocks are listed under the class of their receiver or self type instead.
+   */
+  functions?: Method[];
+  /**
+   * The variables and constants declared at the top level of the file, outside any class.
+   */
+  variables?: Field[];
+}
+export interface Import {
+  /**
+   * The imported name as written, without a trailing wildcard, e.g. "java.util.List", "java.util" for java.util.*, or "java.util.Collections.emptyList" for a static import.
+   */
+  name: string;
+  /**
+   * Whether it is a static import.
+   */
+  static?: boolean;
+  /**
+   * Whether it imports every member, as in java.util.*.
+   */
+  wildcard?: boolean;
+  /**
+   * The line the import statement starts on, starting at 1.
+   */
+  startLine?: number;
+  /**
+   * The line the import statement ends on, inclusive.
+   */
+  endLine?: number;
+  /**
+   * The column on startLine it starts at, starting at 1.
+   */
+  startColumn?: number;
+  /**
+   * The column on endLine it ends at, inclusive.
+   */
+  endColumn?: number;
 }
 export interface Class {
+  /**
+   * The simple name. An anonymous class has none and uses the part of its binary name after the last $, e.g. "1" for "com.example.Outer$1".
+   */
   name: string;
+  /**
+   * The canonical name, e.g. "com.example.Outer.Inner" for a member class. Local and anonymous classes have no canonical name and use their binary name, e.g. "com.example.Outer$1".
+   */
   qualifiedName: string;
-  kind?: "CLASS" | "INTERFACE" | "ENUM" | "RECORD" | "ANNOTATION";
+  /**
+   * The line the declaration, including its annotations and body, starts on, starting at 1.
+   */
+  startLine?: number;
+  /**
+   * The line the declaration, including its annotations and body, ends on, inclusive.
+   */
+  endLine?: number;
+  /**
+   * The column on startLine it starts at, starting at 1.
+   */
+  startColumn?: number;
+  /**
+   * The column on endLine it ends at, inclusive.
+   */
+  endColumn?: number;
+  /**
+   * CLASS, INTERFACE, ENUM, RECORD and ANNOTATION as in Java; STRUCT for Go and Rust structs; TRAIT for Rust traits; TYPE_ALIAS for a named type that is none of these, such as a TypeScript type alias, a Go defined type like "type Celsius float64" or a Rust type alias, with the type it names in aliasedType. TypeScript and Python classes are CLASS, Python protocols are INTERFACE.
+   */
+  kind?: "CLASS" | "INTERFACE" | "ENUM" | "RECORD" | "ANNOTATION" | "STRUCT" | "TRAIT" | "TYPE_ALIAS";
+  /**
+   * Whether it is declared at the top level of its file, as a member of another class, inside a method body, or as an anonymous class. Absent means TOP_LEVEL.
+   */
+  nesting?: "TOP_LEVEL" | "MEMBER" | "LOCAL" | "ANONYMOUS";
+  /**
+   * For local and anonymous classes, the qualified name of the method whose body declares it.
+   */
+  enclosingMethod?: string;
   /**
    * The modifiers as declared in the source.
    */
@@ -68,24 +163,153 @@ export interface Class {
    */
   typeParameters?: string[];
   /**
-   * The qualified name of the class it extends, with its type arguments, e.g. "java.util.AbstractList<com.example.Order>". Only for classes.
+   * The classes it extends, in declaration order. Java and TypeScript classes have at most one, Python classes can have several.
    */
-  superClass?: string;
+  superClasses?: TypeRef[];
   /**
-   * The qualified names of the interfaces it implements, or for an interface those it extends, with their type arguments.
+   * The interfaces it implements, or for an interface those it extends. For Rust, the traits it implements or, for a trait, its supertraits. For Go, the interfaces an interface embeds.
    */
-  interfaces?: string[];
+  interfaces?: TypeRef[];
+  aliasedType?: TypeRef1;
+  /**
+   * The constants of an enum, in declaration order.
+   */
+  enumConstants?: EnumConstant[];
+  /**
+   * The components of a record, in declaration order.
+   */
+  recordComponents?: RecordComponent[];
   methods?: Method[];
+  /**
+   * Its fields, or for TypeScript its properties. A Go embedded field is a field named after its type.
+   */
   fields?: Field[];
+  annotations?: Annotation[];
+  /**
+   * The classes nested in this class: member classes, and local and anonymous classes declared in its methods.
+   */
+  classes?: Class[];
+}
+/**
+ * A type as declared, with the classes it refers to.
+ */
+export interface TypeRef {
+  /**
+   * The type with qualified names and its type arguments, e.g. "java.util.Map<java.lang.String, com.example.Order>[]".
+   */
+  name: string;
+  /**
+   * The qualified names of every class the type refers to, including through type arguments, bounds and array element types, e.g. ["java.util.Map", "java.lang.String", "com.example.Order"]. Primitive types and type variables are left out.
+   */
+  references?: string[];
+}
+/**
+ * A type as declared, with the classes it refers to.
+ */
+export interface TypeRef1 {
+  /**
+   * The type with qualified names and its type arguments, e.g. "java.util.Map<java.lang.String, com.example.Order>[]".
+   */
+  name: string;
+  /**
+   * The qualified names of every class the type refers to, including through type arguments, bounds and array element types, e.g. ["java.util.Map", "java.lang.String", "com.example.Order"]. Primitive types and type variables are left out.
+   */
+  references?: string[];
+}
+export interface EnumConstant {
+  name: string;
+  /**
+   * The qualified name of the enum followed by the constant, e.g. "com.example.Status.OPEN".
+   */
+  qualifiedName?: string;
+  /**
+   * The line the constant, including its arguments and body, starts on, starting at 1.
+   */
+  startLine?: number;
+  /**
+   * The line the constant, including its arguments and body, ends on, inclusive.
+   */
+  endLine?: number;
+  /**
+   * The column on startLine it starts at, starting at 1.
+   */
+  startColumn?: number;
+  /**
+   * The column on endLine it ends at, inclusive.
+   */
+  endColumn?: number;
+  annotations?: Annotation[];
+}
+/**
+ * A Java annotation, a TypeScript or Python decorator, or a Rust attribute such as #[derive(Debug)].
+ */
+export interface Annotation {
+  name: string;
+  qualifiedName?: string;
+  /**
+   * The line the annotation, including its arguments, starts on, starting at 1.
+   */
+  startLine?: number;
+  /**
+   * The line the annotation, including its arguments, ends on, inclusive.
+   */
+  endLine?: number;
+  /**
+   * The column on startLine it starts at, starting at 1.
+   */
+  startColumn?: number;
+  /**
+   * The column on endLine it ends at, inclusive.
+   */
+  endColumn?: number;
+  arguments?: {
+    [k: string]: unknown;
+  };
+}
+export interface RecordComponent {
+  name: string;
+  type: TypeRef;
+  /**
+   * The line the component starts on, starting at 1.
+   */
+  startLine?: number;
+  /**
+   * The line the component ends on, inclusive.
+   */
+  endLine?: number;
+  /**
+   * The column on startLine it starts at, starting at 1.
+   */
+  startColumn?: number;
+  /**
+   * The column on endLine it ends at, inclusive.
+   */
+  endColumn?: number;
   annotations?: Annotation[];
 }
 export interface Method {
   name: string;
   qualifiedName: string;
   /**
-   * Whether this is a method or a constructor. A constructor has no return type.
+   * The line the declaration, including its annotations and body, starts on, starting at 1.
    */
-  kind?: "METHOD" | "CONSTRUCTOR";
+  startLine?: number;
+  /**
+   * The line the declaration, including its annotations and body, ends on, inclusive.
+   */
+  endLine?: number;
+  /**
+   * The column on startLine it starts at, starting at 1.
+   */
+  startColumn?: number;
+  /**
+   * The column on endLine it ends at, inclusive.
+   */
+  endColumn?: number;
+  /**
+   * METHOD for a method, CONSTRUCTOR for a constructor (Python __init__, TypeScript constructor), FUNCTION for a function declared outside any class. A constructor has no return type.
+   */
+  kind?: "METHOD" | "CONSTRUCTOR" | "FUNCTION";
   /**
    * The modifiers as declared in the source.
    */
@@ -94,43 +318,232 @@ export interface Method {
    * The declared type parameters with their bounds, e.g. "T extends java.lang.Comparable<T>".
    */
   typeParameters?: string[];
-  returnType?: string;
+  returnType?: TypeRef2;
   parameters?: Parameter[];
+  /**
+   * The exception types in its throws clause.
+   */
+  throws?: TypeRef[];
+  /**
+   * For an element of an annotation type, its default value, with the same encoding as Annotation.arguments.
+   */
+  defaultValue?: {
+    [k: string]: unknown;
+  };
   annotations?: Annotation[];
+  /**
+   * The methods and constructors called from the body, one entry per call site. Calls inside lambdas and anonymous classes declared in the body belong to this method.
+   */
+  calls?: Call[];
+  /**
+   * The fields read or written by the body, one entry per access.
+   */
+  fieldAccesses?: FieldAccess[];
+  /**
+   * The types the body refers to other than through its calls and field accesses, such as local variables, casts and instanceof checks, one entry per use.
+   */
+  typeUses?: TypeUse[];
+}
+/**
+ * A type as declared, with the classes it refers to.
+ */
+export interface TypeRef2 {
+  /**
+   * The type with qualified names and its type arguments, e.g. "java.util.Map<java.lang.String, com.example.Order>[]".
+   */
+  name: string;
+  /**
+   * The qualified names of every class the type refers to, including through type arguments, bounds and array element types, e.g. ["java.util.Map", "java.lang.String", "com.example.Order"]. Primitive types and type variables are left out.
+   */
+  references?: string[];
 }
 export interface Parameter {
   name: string;
-  type: string;
+  type?: TypeRef3;
   /**
    * The qualified name of the method followed by the name of the parameter, e.g. "com.example.Orders.find(java.lang.String).id".
    */
   qualifiedName?: string;
+  /**
+   * The line the declaration starts on, starting at 1.
+   */
+  startLine?: number;
+  /**
+   * The line the declaration ends on, inclusive.
+   */
+  endLine?: number;
+  /**
+   * The column on startLine it starts at, starting at 1.
+   */
+  startColumn?: number;
+  /**
+   * The column on endLine it ends at, inclusive.
+   */
+  endColumn?: number;
   annotations?: Annotation[];
 }
-export interface Annotation {
+/**
+ * A type as declared, with the classes it refers to.
+ */
+export interface TypeRef3 {
+  /**
+   * The type with qualified names and its type arguments, e.g. "java.util.Map<java.lang.String, com.example.Order>[]".
+   */
   name: string;
-  qualifiedName?: string;
-  arguments?: {
-    [k: string]: unknown;
-  };
+  /**
+   * The qualified names of every class the type refers to, including through type arguments, bounds and array element types, e.g. ["java.util.Map", "java.lang.String", "com.example.Order"]. Primitive types and type variables are left out.
+   */
+  references?: string[];
+}
+export interface Call {
+  /**
+   * The qualified name of the method or constructor called, as in Method.qualifiedName, e.g. "com.example.OrderRepository.findById(java.lang.String)".
+   */
+  target: string;
+  /**
+   * METHOD for a method call, CONSTRUCTOR for new, this(...) and super(...), METHOD_REFERENCE for a method or constructor reference such as Order::getId.
+   */
+  kind?: "METHOD" | "CONSTRUCTOR" | "METHOD_REFERENCE";
+  /**
+   * The line the call expression, including its arguments, starts on, starting at 1.
+   */
+  startLine?: number;
+  /**
+   * The line the call expression, including its arguments, ends on, inclusive.
+   */
+  endLine?: number;
+  /**
+   * The column on startLine it starts at, starting at 1.
+   */
+  startColumn?: number;
+  /**
+   * The column on endLine it ends at, inclusive.
+   */
+  endColumn?: number;
+  /**
+   * Whether the scanner resolved the target. When false, the target is the name as written in the source, e.g. because the library declaring it is not on the classpath.
+   */
+  resolved?: boolean;
+}
+export interface FieldAccess {
+  /**
+   * The qualified name of the field, as in Field.qualifiedName, e.g. "com.example.Order.id".
+   */
+  target: string;
+  /**
+   * READ, WRITE, or READ_WRITE for compound assignments and increments such as count++.
+   */
+  access: "READ" | "WRITE" | "READ_WRITE";
+  /**
+   * The line the field access starts on, starting at 1.
+   */
+  startLine?: number;
+  /**
+   * The line the field access ends on, inclusive.
+   */
+  endLine?: number;
+  /**
+   * The column on startLine it starts at, starting at 1.
+   */
+  startColumn?: number;
+  /**
+   * The column on endLine it ends at, inclusive.
+   */
+  endColumn?: number;
+  /**
+   * Whether the scanner resolved the target. When false, the target is the name as written in the source, e.g. because the library declaring it is not on the classpath.
+   */
+  resolved?: boolean;
+}
+export interface TypeUse {
+  /**
+   * The qualified name of the class used.
+   */
+  target: string;
+  /**
+   * How the body uses the type. Types in the signature are in returnType and the parameters, and instantiations are CONSTRUCTOR calls.
+   */
+  kind: "LOCAL_VARIABLE" | "CAST" | "INSTANCEOF" | "CLASS_LITERAL" | "CATCH" | "TYPE_ARGUMENT" | "OTHER";
+  /**
+   * The line the type starts on, starting at 1.
+   */
+  startLine?: number;
+  /**
+   * The line the type ends on, inclusive.
+   */
+  endLine?: number;
+  /**
+   * The column on startLine it starts at, starting at 1.
+   */
+  startColumn?: number;
+  /**
+   * The column on endLine it ends at, inclusive.
+   */
+  endColumn?: number;
+  /**
+   * Whether the scanner resolved the target. When false, the target is the name as written in the source, e.g. because the library declaring it is not on the classpath.
+   */
+  resolved?: boolean;
 }
 export interface Field {
   name: string;
-  type: string;
+  type?: TypeRef4;
   qualifiedName?: string;
+  /**
+   * The line the declaration, including its annotations and initializer, starts on, starting at 1.
+   */
+  startLine?: number;
+  /**
+   * The line the declaration, including its annotations and initializer, ends on, inclusive.
+   */
+  endLine?: number;
+  /**
+   * The column on startLine it starts at, starting at 1.
+   */
+  startColumn?: number;
+  /**
+   * The column on endLine it ends at, inclusive.
+   */
+  endColumn?: number;
   /**
    * The modifiers as declared in the source.
    */
   modifiers?: Modifier[];
   annotations?: Annotation[];
 }
+/**
+ * A type as declared, with the classes it refers to.
+ */
+export interface TypeRef4 {
+  /**
+   * The type with qualified names and its type arguments, e.g. "java.util.Map<java.lang.String, com.example.Order>[]".
+   */
+  name: string;
+  /**
+   * The qualified names of every class the type refers to, including through type arguments, bounds and array element types, e.g. ["java.util.Map", "java.lang.String", "com.example.Order"]. Primitive types and type variables are left out.
+   */
+  references?: string[];
+}
+/**
+ * A package of the module: a Java, Python or Go package, or a Rust module. TypeScript and JavaScript have none. Its classes are listed under the files that declare them, which name it in File.package.
+ */
 export interface Package {
   name: string;
   qualifiedName?: string;
-  classes?: Class[];
 }
 export interface Dependency {
+  /**
+   * The name the build system knows it by: "group:artifact" for Maven and Gradle, the package name for npm and Python, e.g. "@scope/package" or "requests", the module path for Go, e.g. "github.com/google/uuid", and the crate name for Cargo.
+   */
   name: string;
   version?: string;
   scope?: string;
+  /**
+   * Whether it is pulled in through another dependency rather than declared by the module.
+   */
+  transitive?: boolean;
+  /**
+   * The path of the module in this scan result it refers to, when it is another module of the same target rather than an external library.
+   */
+  module?: string;
 }
