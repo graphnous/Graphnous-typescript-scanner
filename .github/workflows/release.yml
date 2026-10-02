@@ -1,5 +1,6 @@
-# Publishes scanner.js as a release asset for each v* tag, such as v0.1.0.
-# The server's image downloads it from the release of the version it pins.
+# Publishes the scanner's image to the GitHub Container Registry for each
+# v* tag: v0.1.0 becomes ghcr.io/graphnous/graphnous-typescript-scanner:0.1.0,
+# the image the Graphnous server's configuration names.
 
 name: Release
 
@@ -8,11 +9,17 @@ on:
     tags: ["v*"]
 
 permissions:
-  contents: write
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/graphnous/graphnous-typescript-scanner
+  SCHEMA_URL: https://graphnous.github.io/graphnous-schemas/schema/scan/scan-result.schema.json
+  SCHEMA_PATH: ${{ github.workspace }}/.schemas/scan-result.schema.json
 
 jobs:
-  release:
-    name: Release
+  image:
+    name: Image
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -22,13 +29,34 @@ jobs:
           node-version: 24
           cache: npm
 
+      - name: Download the scan result schema
+        run: curl -sSf --retry 3 --create-dirs -o "$SCHEMA_PATH" "$SCHEMA_URL"
+
       - run: npm ci
 
       - run: npm test
-
-      - run: npm run build
-
-      - name: Publish the release
-        run: gh release create "$GITHUB_REF_NAME" build/scanner.js --generate-notes
         env:
-          GH_TOKEN: ${{ github.token }}
+          GRAPHNOUS_SCAN_RESULT_SCHEMA: ${{ env.SCHEMA_PATH }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: type=semver,pattern={{version}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
