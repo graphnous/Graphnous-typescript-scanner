@@ -1,11 +1,9 @@
 # The scanner's tests, for its own repository, with the scanner at its
 # root.
 #
-# A test checks the scanner's results against the schema the server reads
-# them with, graphnous-schemas/scan/scan-result.schema.json, from the
-# repository that holds it: the SCHEMAS_REPOSITORY variable, by default
-# graphnous/Graphnous-2. That repository is private, so this needs a
-# SCHEMAS_TOKEN secret that can read its contents.
+# The scanner's results are checked against the scan result schema the
+# server reads them with, as graphnous-schemas publishes it. The types in
+# src/generated must be generated from that same schema.
 
 name: CI
 
@@ -14,6 +12,10 @@ on:
     branches: [main]
   pull_request:
 
+env:
+  SCHEMA_URL: https://graphnous.github.io/graphnous-schemas/schema/scan/scan-result.schema.json
+  SCHEMA_PATH: ${{ github.workspace }}/.schemas/scan-result.schema.json
+
 jobs:
   test:
     name: Tests
@@ -21,13 +23,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check out the scan result schema
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ vars.SCHEMAS_REPOSITORY || 'graphnous/Graphnous-2' }}
-          token: ${{ secrets.SCHEMAS_TOKEN }}
-          path: .schemas
-          sparse-checkout: graphnous-schemas/scan
+      - name: Download the scan result schema
+        run: curl -sSf --retry 3 --create-dirs -o "$SCHEMA_PATH" "$SCHEMA_URL"
 
       - uses: actions/setup-node@v4
         with:
@@ -36,9 +33,17 @@ jobs:
 
       - run: npm ci
 
+      - name: Check the generated types match the schema
+        run: |
+          npm run generate -- "$SCHEMA_PATH"
+          git diff --exit-code src/generated || {
+            echo "::error::src/generated is out of date with the published schema. Run npm run generate and commit the result."
+            exit 1
+          }
+
       - run: npm test
         env:
-          GRAPHNOUS_SCAN_RESULT_SCHEMA: ${{ github.workspace }}/.schemas/graphnous-schemas/scan/scan-result.schema.json
+          GRAPHNOUS_SCAN_RESULT_SCHEMA: ${{ env.SCHEMA_PATH }}
 
       # Also typechecks, and bundles scanner.js as the server runs it
       - run: npm run build
