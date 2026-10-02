@@ -1,0 +1,5 @@
+/node_modules
+/dist
+/build
+# The scan result schema, checked out by CI
+/.schemas
