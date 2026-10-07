@@ -8,7 +8,7 @@
     "dev": "tsx src/main.ts",
     "build": "tsc && esbuild dist/main.js --bundle --platform=node --outfile=build/scanner.js",
     "start": "node dist/main.js",
-    "generate": "node scripts/generate.mjs",
+    "generate": "curl -fsSL https://graphnous.github.io/graphnous-schemas/schema/scan/scan-result.schema.json | json2ts -o src/generated/ScanResult.ts",
     "test": "tsx --test test/*.test.ts"
   },
   "devDependencies": {
@@ -19,5 +19,8 @@
     "json-schema-to-typescript": "^16.0.0",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "typescript-api": "npm:typescript@^5.9.3"
   }
 }

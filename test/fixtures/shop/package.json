@@ -1,0 +1,8 @@
+{
+  "name": "shop",
+  "packageManager": "pnpm@9.1.0+sha512.abc",
+  "engines": { "node": ">=20.11.0" },
+  "workspaces": ["packages/*"],
+  "dependencies": { "express": "^5.1.0" },
+  "devDependencies": { "typescript": "^5.9.3" }
+}

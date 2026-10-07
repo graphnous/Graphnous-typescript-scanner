@@ -1,0 +1,4 @@
+{
+  "name": "@shop/ui",
+  "dependencies": { "shop": "workspace:*", "react": "^19.0.0" }
+}
