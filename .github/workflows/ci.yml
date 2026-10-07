@@ -1,8 +1,9 @@
 # The scanner's tests, for its own repository, with the scanner at its
 # root.
 #
-# A test checks the scanner's results against the schema the server reads
-# them with, scan/scan-result.schema.json from graphnous/graphnous-schemas.
+# The scanner's results are checked against the scan result schema the
+# server reads them with, as graphnous-schemas publishes it. The types in
+# src/generated must be generated from that same schema.
 
 name: CI
 
@@ -22,12 +23,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check out the scan result schema
-        uses: actions/checkout@v4
-        with:
-          repository: graphnous/graphnous-schemas
-          path: .schemas
-          sparse-checkout: scan
+      - name: Download the scan result schema
+        run: curl -sSf --retry 3 --create-dirs -o "$SCHEMA_PATH" "$SCHEMA_URL"
 
       - uses: actions/setup-node@v4
         with:
@@ -46,7 +43,7 @@ jobs:
 
       - run: npm test
         env:
-          GRAPHNOUS_SCAN_RESULT_SCHEMA: ${{ github.workspace }}/.schemas/scan/scan-result.schema.json
+          GRAPHNOUS_SCAN_RESULT_SCHEMA: ${{ env.SCHEMA_PATH }}
 
       # Also typechecks, and bundles scanner.js as the server runs it
       - run: npm run build
