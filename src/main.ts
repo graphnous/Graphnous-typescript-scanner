@@ -4,7 +4,7 @@ import { writeFileSync } from "node:fs";
 function main(): void {
     const options = parseArguments(process.argv.slice(2));
 
-    console.log("GraphNous TypeScript Scanner starting");
+    console.log("Graphnous TypeScript Scanner starting");
     console.log("Repository:", options.path);
     console.log("Target:", options.target);
     console.log("Output:", options.output);

@@ -2,10 +2,7 @@
 # root.
 #
 # A test checks the scanner's results against the schema the server reads
-# them with, graphnous-schemas/scan/scan-result.schema.json, from the
-# repository that holds it: the SCHEMAS_REPOSITORY variable, by default
-# graphnous/Graphnous-2. That repository is private, so this needs a
-# SCHEMAS_TOKEN secret that can read its contents.
+# them with, scan/scan-result.schema.json from graphnous/graphnous-schemas.
 
 name: CI
 
@@ -24,10 +21,9 @@ jobs:
       - name: Check out the scan result schema
         uses: actions/checkout@v4
         with:
-          repository: ${{ vars.SCHEMAS_REPOSITORY || 'graphnous/Graphnous-2' }}
-          token: ${{ secrets.SCHEMAS_TOKEN }}
+          repository: graphnous/graphnous-schemas
           path: .schemas
-          sparse-checkout: graphnous-schemas/scan
+          sparse-checkout: scan
 
       - uses: actions/setup-node@v4
         with:
@@ -38,7 +34,7 @@ jobs:
 
       - run: npm test
         env:
-          GRAPHNOUS_SCAN_RESULT_SCHEMA: ${{ github.workspace }}/.schemas/graphnous-schemas/scan/scan-result.schema.json
+          GRAPHNOUS_SCAN_RESULT_SCHEMA: ${{ github.workspace }}/.schemas/scan/scan-result.schema.json
 
       # Also typechecks, and bundles scanner.js as the server runs it
       - run: npm run build
