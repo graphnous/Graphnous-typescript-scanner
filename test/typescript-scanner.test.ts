@@ -180,6 +180,19 @@ test("resolves calls across files, and leaves others as written", () => {
     );
 });
 
+test("lists the arguments of calls as written", () => {
+    const calls = find(orderService.methods, "src/orders:OrderService.open").calls ?? [];
+
+    assert.deepEqual(calls.map(call => call.arguments), [
+        [{ value: "String(id)" }],
+        [{ value: "id" }],
+        [{ value: "String(id)" }],
+        [{ value: "id" }],
+        [{ value: "\"closed\"" }],
+        [{ value: "order" }]
+    ]);
+});
+
 test("lists method references", () => {
     assert.deepEqual(targets(find(orderService.methods, "src/orders:OrderService.close"), "calls"), [
         "METHOD [order].forEach",
@@ -237,6 +250,20 @@ test("lists rendered components as calls", () => {
 
     assert.deepEqual(targets(orderButton, "calls"), ["METHOD packages/ui/src/Button:Button"]);
     assert.deepEqual(targets(orderButton, "fieldAccesses"), ["READ src/orders:Order.id"]);
+});
+
+test("lists the attributes of rendered components as named arguments", () => {
+    const functions = file("packages/ui/src/Button.tsx").functions;
+
+    assert.deepEqual(
+        find(functions, "packages/ui/src/Button:OrderButton").calls?.map(call => call.arguments),
+        [[{ name: "label", value: "props.order.id" }]]
+    );
+
+    assert.deepEqual(
+        find(functions, "packages/ui/src/Button:ClosedButton").calls?.map(call => call.arguments),
+        [[{ value: "props", spread: true }, { name: "title", value: "\"Closed\"" }, { name: "disabled", value: "true" }]]
+    );
 });
 
 for (const [range, version] of [
