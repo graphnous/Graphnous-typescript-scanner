@@ -15,6 +15,7 @@ import type {
     TypeRef,
     TypeUse
 } from "../generated/ScanResult.js";
+import { libraryDeclarations } from "./library-declarations.js";
 
 /**
  * Where a declaration is: its lines and columns, starting at 1, with the
@@ -73,8 +74,13 @@ interface Declared {
  * anonymous classes are named after the method that declares them, e.g.
  * "src/orders:Orders.find.Query", with anonymous ones numbered from 1.
  *
- * A reference resolves when it is to a declaration in the target; else its
- * target is the name as written, e.g. "console.log".
+ * Declarations of TypeScript's built-in library, the JavaScript built-ins
+ * and the DOM, have their global names, e.g. "Array.isArray"; see
+ * {@link libraryDeclarations}.
+ *
+ * A reference resolves when it is to a declaration in the target or the
+ * built-in library; else its target is the name as written, e.g.
+ * "express.Router".
  */
 export class SourceParser {
 
@@ -102,6 +108,20 @@ export class SourceParser {
 
     constructor(program: ts.Program) {
         this.checker = program.getTypeChecker();
+
+        const library = libraryDeclarations(
+            program.getSourceFiles().filter(sourceFile => program.isSourceFileDefaultLibrary(sourceFile))
+        );
+
+        for (const [declarations, kind] of [
+            [library.methods, this.methods],
+            [library.fields, this.fields],
+            [library.classes, this.classes]
+        ] as const) {
+            for (const [declaration, name] of declarations) {
+                this.register(name, kind, declaration);
+            }
+        }
     }
 
     /**

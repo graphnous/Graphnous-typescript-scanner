@@ -108,8 +108,8 @@ export class TypeScriptScanner {
 /**
  * A program of the files, to resolve what they refer to. It takes the
  * compiler options of the target's tsconfig.json, such as its path
- * aliases, but leaves out the standard library and dependencies: only
- * references to the target's own declarations resolve.
+ * aliases and built-in library, but leaves out dependencies: references
+ * resolve to the target's own declarations and to the built-in library.
  */
 function createProgram(targetPath: string, paths: string[]): ts.Program {
     let options: ts.CompilerOptions = {
@@ -139,7 +139,9 @@ function createProgram(targetPath: string, paths: string[]): ts.Program {
             allowJs: true,
             checkJs: false,
             noEmit: true,
-            noLib: true,
+            // The built-in library of the target's tsconfig, else the
+            // newest with the DOM, so calls into it resolve
+            lib: options.lib ?? (options.target === undefined ? ["lib.esnext.full.d.ts"] : undefined),
             noResolve: true,
             types: [],
             skipLibCheck: true,

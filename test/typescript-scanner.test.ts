@@ -77,7 +77,7 @@ test("detects each package as a module, with its dependencies", () => {
     assert.deepEqual(
         result.modules.map(module => [module.path, module.name, module.files.map(file => file.path)]),
         [
-            [".", "shop", ["src/index.ts", "src/logging.js", "src/orders.test.ts", "src/orders.ts", "src/server.ts"]],
+            [".", "shop", ["src/builtins.ts", "src/index.ts", "src/logging.js", "src/orders.test.ts", "src/orders.ts", "src/server.ts"]],
             ["packages/ui", "@shop/ui", ["packages/ui/src/Button.tsx"]]
         ]
     );
@@ -164,7 +164,7 @@ test("lists decorators as annotations", () => {
     );
 });
 
-test("resolves calls across files, and leaves others as written", () => {
+test("resolves calls across files", () => {
     assert.deepEqual(targets(find(orderService.methods, "src/orders:OrderService.open"), "calls"), [
         "METHOD src/orders:Repository.find",
         "METHOD String",
@@ -176,8 +176,38 @@ test("resolves calls across files, and leaves others as written", () => {
 
     assert.deepEqual(
         find(orderService.methods, "src/orders:OrderService.open").calls?.map(call => call.resolved),
-        [true, false, true, false, true, true]
+        [true, true, true, true, true, true]
     );
+});
+
+test("names the built-in library by its global names, and leaves other calls as written", () => {
+    const builtins = find(file("src/builtins.ts").functions, "src/builtins:builtins");
+
+    assert.deepEqual(targets(builtins, "calls"), [
+        "METHOD Array.isArray",
+        "CONSTRUCTOR TypeError.constructor",
+        "METHOD console.log",
+        "METHOD Math.min",
+        "METHOD Number",
+        "METHOD Array.push",
+        "METHOD Headers.get",
+        "METHOD Intl.NumberFormat.format",
+        "CONSTRUCTOR Intl.NumberFormat.constructor",
+        "METHOD Promise.race",
+        "METHOD Promise.resolve",
+        "METHOD Array.map",
+        "METHOD Map.keys",
+        "CONSTRUCTOR Map.constructor"
+    ]);
+
+    assert.deepEqual(targets(builtins, "fieldAccesses"), ["READ Array.length", "READ console"]);
+    assert.deepEqual(targets(builtins, "typeUses"), ["CLASS_LITERAL String", "INSTANCEOF TypeError"]);
+    assert.deepEqual(builtins.returnType?.references, ["Promise"]);
+    assert.ok(builtins.calls?.every(call => call.resolved));
+
+    const unresolved = file("src/server.ts").calls?.find(call => call.target === "process.on");
+
+    assert.equal(unresolved?.resolved, false);
 });
 
 test("lists the arguments of calls as written", () => {
@@ -195,7 +225,7 @@ test("lists the arguments of calls as written", () => {
 
 test("lists method references", () => {
     assert.deepEqual(targets(find(orderService.methods, "src/orders:OrderService.close"), "calls"), [
-        "METHOD [order].forEach",
+        "METHOD Array.forEach",
         "METHOD_REFERENCE src/orders:OrderService.notify"
     ]);
 });
@@ -254,14 +284,15 @@ test("lists the calls, field accesses and type uses of code at the top level of 
         "METHOD src/logging:log",
         "METHOD process.on",
         "METHOD src/orders:OrderService.open",
-        "METHOD customElements.define"
+        "METHOD CustomElementRegistry.define"
     ]);
 
     assert.deepEqual(targets(server, "fieldAccesses"), [
         "READ src/orders:Order.id",
         "READ src/orders:OrderService.count",
         "READ src/server:service",
-        "READ src/orders:DEFAULT_STATUS"
+        "READ src/orders:DEFAULT_STATUS",
+        "READ customElements"
     ]);
 
     assert.deepEqual(targets(server, "typeUses"), ["CLASS_LITERAL src/orders:OrderService"]);
