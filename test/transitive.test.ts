@@ -19,6 +19,7 @@ const EXPECTED = {
 for (const [packageManager, lockFile] of [
     ["npm", "package-lock.json"],
     ["pnpm", "pnpm-lock.yaml"],
+    ["pnpm8", "pnpm-lock.yaml of pnpm 8"],
     ["yarn1", "yarn.lock v1"],
     ["berry", "yarn.lock of Yarn Berry"],
     ["bun", "bun.lock"]
