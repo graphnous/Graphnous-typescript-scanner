@@ -49,6 +49,14 @@ node build/scanner.js --path . --target . --output scan-result.json
   uses, resolved to the name of what they refer to. What cannot be resolved
   is kept as written, with `resolved` set to `false`.
 
+Imports resolve as the project resolves them: with the path aliases of the
+`tsconfig.json` or `jsconfig.json` nearest to each file, such as
+`"@/*": ["src/*"]`, including those of a configuration it extends, so each
+package of a workspace has its own. Imports of the packages of a workspace,
+such as `@shop/ui`, resolve to their sources, also when their
+`package.json` points at a build that is not there, such as
+`dist/index.js` for `src/index.ts`.
+
 Calls into the JavaScript built-ins and the DOM resolve to their global
 names, e.g. `Array.isArray`, `Promise.race` or `console.log`. Calls into
 packages resolve when the scanner has their types, see below, to the module

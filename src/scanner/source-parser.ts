@@ -902,6 +902,16 @@ export class SourceParser {
             ? this.names.get(declaration)
             : undefined;
 
+        if (ts.isNewExpression(node)) {
+            // The constructor of the class created, also when it inherits
+            // the one the signature is declared in
+            const created = this.declarationOf(node.expression);
+
+            if (created && this.classes.has(created)) {
+                target = qualify(this.names.get(created)!, "constructor");
+            }
+        }
+
         if (target === undefined && !isConstructor) {
             // A function a property or variable holds, such as app.get of
             // express or test of ava, after the property or variable
