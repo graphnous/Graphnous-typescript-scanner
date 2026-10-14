@@ -1,5 +1,6 @@
 import ts from "typescript-api";
 import type {
+    Argument,
     Annotation,
     Call,
     Class,
@@ -844,6 +845,8 @@ export class SourceParser {
         return {
             target: target ?? writtenName(callee, sourceFile),
             kind,
+            // new Order without parentheses passes nothing
+            arguments: (node.arguments ?? []).map(argument => callArgument(argument, sourceFile)),
             ...this.location(node, sourceFile),
             resolved: target !== undefined
         };
@@ -851,20 +854,27 @@ export class SourceParser {
 
     /**
      * A component rendered with JSX, such as <OrderList />, as a call to the
-     * function or a constructor of the class. Elements such as <div> are
-     * not calls.
+     * function or a constructor of the class, with its attributes as the
+     * arguments, each under its name. Elements such as <div> are not calls.
      */
     private jsxCall(node: ts.JsxOpeningLikeElement, sourceFile: ts.SourceFile): Call | undefined {
         const declaration = this.declarationOf(node.tagName);
 
         if (declaration && this.methods.has(declaration)) {
-            return { target: this.names.get(declaration)!, kind: "METHOD", ...this.location(node, sourceFile), resolved: true };
+            return {
+                target: this.names.get(declaration)!,
+                kind: "METHOD",
+                arguments: jsxArguments(node, sourceFile),
+                ...this.location(node, sourceFile),
+                resolved: true
+            };
         }
 
         if (declaration && this.classes.has(declaration)) {
             return {
                 target: qualify(this.names.get(declaration)!, "constructor"),
                 kind: "CONSTRUCTOR",
+                arguments: jsxArguments(node, sourceFile),
                 ...this.location(node, sourceFile),
                 resolved: true
             };
@@ -904,6 +914,8 @@ export class SourceParser {
             calls.push({
                 target: this.names.get(declaration)!,
                 kind: "METHOD_REFERENCE",
+                // Passing a method on passes nothing to it
+                arguments: [],
                 ...this.location(node, sourceFile),
                 resolved: true
             });
@@ -1216,6 +1228,59 @@ function bindingNames(
  */
 function text(node: ts.Node, sourceFile: ts.SourceFile): string {
     return node.getText(sourceFile).replace(/\s+/g, " ");
+}
+
+/**
+ * The most characters of an argument that are kept.
+ */
+const ARGUMENT_LENGTH = 200;
+
+/**
+ * An expression passed to a call as written, on one line; a long one, such
+ * as a function passed as a callback, is cut off and ends in "…".
+ */
+function argumentValue(node: ts.Node, sourceFile: ts.SourceFile): string {
+    const value = text(node, sourceFile);
+
+    return value.length > ARGUMENT_LENGTH ? `${value.slice(0, ARGUMENT_LENGTH - 1)}…` : value;
+}
+
+/**
+ * An argument of a call, passed by position; ...ids is spread.
+ */
+function callArgument(argument: ts.Expression, sourceFile: ts.SourceFile): Argument {
+    return ts.isSpreadElement(argument)
+        ? { value: argumentValue(argument.expression, sourceFile), spread: true }
+        : { value: argumentValue(argument, sourceFile) };
+}
+
+/**
+ * The attributes of a JSX element as the arguments of rendering it, each
+ * under its name: the expression between the braces of customerId={id},
+ * the string of title="Orders" with its quotes, and true for an attribute
+ * without a value, as disabled. {...props} is spread. Its children are not
+ * among them.
+ */
+function jsxArguments(node: ts.JsxOpeningLikeElement, sourceFile: ts.SourceFile): Argument[] {
+    return node.attributes.properties.map(attribute => {
+        if (ts.isJsxSpreadAttribute(attribute)) {
+            return { value: argumentValue(attribute.expression, sourceFile), spread: true };
+        }
+
+        const name = text(attribute.name, sourceFile);
+        const initializer = attribute.initializer;
+
+        if (!initializer) {
+            return { name, value: "true" };
+        }
+
+        if (ts.isJsxExpression(initializer)) {
+            // Braces around nothing but a comment pass nothing
+            return { name, value: initializer.expression ? argumentValue(initializer.expression, sourceFile) : "undefined" };
+        }
+
+        return { name, value: argumentValue(initializer, sourceFile) };
+    });
 }
 
 /**

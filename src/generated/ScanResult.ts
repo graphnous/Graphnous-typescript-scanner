@@ -79,13 +79,25 @@ export interface File {
    */
   classes?: Class[];
   /**
-   * The functions declared at the top level of the file, outside any class, with kind FUNCTION. Go methods with a receiver and Rust methods in impl blocks are listed under the class of their receiver or self type instead.
+   * The functions declared at the top level of the file, outside any class, with kind FUNCTION. In TypeScript and JavaScript this includes arrow functions and function expressions assigned to a top-level const, let or var, named after the variable, e.g. "src/orders:find" for "export const find = () => ..."; they are not listed again in variables. Go methods with a receiver and Rust methods in impl blocks are listed under the class of their receiver or self type instead.
    */
   functions?: Method[];
   /**
    * The variables and constants declared at the top level of the file, outside any class.
    */
   variables?: Field[];
+  /**
+   * The methods and constructors called by code at the top level of the file, outside any function or class, one entry per call site: module-level statements such as app.use(...) or router.get(...) in TypeScript and JavaScript, and the initializers of top-level variables. Calls inside functions and classes belong to those.
+   */
+  calls?: Call[];
+  /**
+   * The fields and top-level variables read or written by code at the top level of the file, outside any function or class, one entry per access.
+   */
+  fieldAccesses?: FieldAccess[];
+  /**
+   * The types referred to by code at the top level of the file, outside any function or class, other than through its calls and field accesses, one entry per use. Types of top-level variables are in their type.
+   */
+  typeUses?: TypeUse[];
 }
 export interface Import {
   /**
@@ -405,6 +417,10 @@ export interface Call {
    */
   kind?: "METHOD" | "CONSTRUCTOR" | "METHOD_REFERENCE";
   /**
+   * What the call passes, in the order written, one entry per argument: for a component rendered with JSX, its attributes, each under its name, without its children. Empty for a call that passes nothing, such as find(), and for a METHOD_REFERENCE, which passes nothing itself. A scanner that does not record arguments leaves them out of every call.
+   */
+  arguments?: Argument[];
+  /**
    * The line the call expression, including its arguments, starts on, starting at 1.
    */
   startLine?: number;
@@ -425,9 +441,26 @@ export interface Call {
    */
   resolved?: boolean;
 }
+/**
+ * One argument of a call, as written at the call site. It is the source, not a value: what an expression evaluates to is not known to a scanner.
+ */
+export interface Argument {
+  /**
+   * The name the argument is passed under, when it is passed by name: the attribute of a JSX element, e.g. "customerId" for <OrderList customerId={id} />, or the name of a named argument in a language that has them. Absent for an argument passed by position, as in Java, and in TypeScript and JavaScript outside JSX.
+   */
+  name?: string;
+  /**
+   * The expression passed, as written in the source, with each run of whitespace, line breaks included, as one space: e.g. "id", "\"/api/orders\"" with its quotes, or "`/api/orders/${id}`" with its backticks. At most 200 characters: a longer one, such as a function passed as a callback, is cut off after 199 and ends in "…". For a JSX attribute it is the expression between its braces, e.g. "id" for customerId={id}, the string with its quotes for title="Orders", and "true" for an attribute without a value, as disabled in <Button disabled />. For a spread argument it is the expression spread, without the dots.
+   */
+  value: string;
+  /**
+   * Whether the argument is spread, as ...ids in a call or {...props} in a JSX element. What it passes is then not known from the source: any number of arguments, or attributes of any name.
+   */
+  spread?: boolean;
+}
 export interface FieldAccess {
   /**
-   * The qualified name of the field, as in Field.qualifiedName, e.g. "com.example.Order.id".
+   * The qualified name of the field or top-level variable, as in Field.qualifiedName, e.g. "com.example.Order.id" or "src/config:settings".
    */
   target: string;
   /**
