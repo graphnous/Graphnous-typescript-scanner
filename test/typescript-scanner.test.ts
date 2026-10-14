@@ -46,7 +46,7 @@ const orders = file("src/orders.ts");
 const order = find(orders.classes, "src/orders:Order");
 const orderService = find(orders.classes, "src/orders:OrderService");
 
-function targets(method: Method, kind: "calls" | "fieldAccesses" | "typeUses"): string[] {
+function targets(method: Method | File, kind: "calls" | "fieldAccesses" | "typeUses"): string[] {
     return (method[kind] ?? []).map(reference => `${"kind" in reference ? reference.kind : reference.access} ${reference.target}`);
 }
 
@@ -77,7 +77,7 @@ test("detects each package as a module, with its dependencies", () => {
     assert.deepEqual(
         result.modules.map(module => [module.path, module.name, module.files.map(file => file.path)]),
         [
-            [".", "shop", ["src/index.ts", "src/logging.js", "src/orders.test.ts", "src/orders.ts"]],
+            [".", "shop", ["src/index.ts", "src/logging.js", "src/orders.test.ts", "src/orders.ts", "src/server.ts"]],
             ["packages/ui", "@shop/ui", ["packages/ui/src/Button.tsx"]]
         ]
     );
@@ -243,6 +243,43 @@ test("lists functions and variables of a file", () => {
         ["src/orders:MAX_ITEMS", ["EXPORT", "CONST"]],
         ["src/orders:MIN_ITEMS", ["EXPORT", "CONST"]]
     ]);
+});
+
+test("lists the calls, field accesses and type uses of code at the top level of a file", () => {
+    const server = file("src/server.ts");
+
+    assert.deepEqual(targets(server, "calls"), [
+        "METHOD src/orders:createService",
+        "METHOD src/logging:log",
+        "METHOD src/logging:log",
+        "METHOD process.on",
+        "METHOD src/orders:OrderService.open",
+        "METHOD customElements.define"
+    ]);
+
+    assert.deepEqual(targets(server, "fieldAccesses"), [
+        "READ src/orders:Order.id",
+        "READ src/orders:OrderService.count",
+        "READ src/server:service",
+        "READ src/orders:DEFAULT_STATUS"
+    ]);
+
+    assert.deepEqual(targets(server, "typeUses"), ["CLASS_LITERAL src/orders:OrderService"]);
+    assert.deepEqual(targets(orders, "fieldAccesses"), ["READ src/orders:Status.OPEN"]);
+});
+
+test("lists an exported default function expression as a function, and classes in top-level code", () => {
+    const server = file("src/server.ts");
+    const exported = find(server.functions, "src/server:default");
+
+    assert.deepEqual(exported.modifiers, ["EXPORT_DEFAULT"]);
+    assert.deepEqual(targets(exported, "calls"), ["CONSTRUCTOR src/orders:Order.constructor"]);
+    assert.deepEqual(server.variables?.map(variable => variable.qualifiedName), ["src/server:service", "src/server:services"]);
+
+    assert.deepEqual(
+        server.classes?.map(declaration => [declaration.qualifiedName, declaration.nesting, declaration.superClasses?.[0].name]),
+        [["src/server:1", "ANONYMOUS", "HTMLElement"]]
+    );
 });
 
 test("lists rendered components as calls", () => {
