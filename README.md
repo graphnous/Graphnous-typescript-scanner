@@ -40,7 +40,9 @@ node build/scanner.js --path . --target . --output scan-result.json
 - A module for each `package.json` of the target, such as the packages of a
   workspace, with their dependencies, and the files of each, as production
   or test code.
-- Classes, interfaces, enums and type aliases, with their members, and the
+- Classes, interfaces, enums and type aliases, with their members, those of
+  type aliases of object types such as `type Client = { get(): ... }`
+  included, and the
   functions and variables of each file, with line and column positions.
   Names are the file path without its extension, a colon, then the dotted
   name, e.g. `src/orders:Orders.find`.

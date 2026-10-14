@@ -388,6 +388,14 @@ export class SourceParser {
             result.kind = "TYPE_ALIAS";
             this.typeParameters(result, declaration.typeParameters);
             result.aliasedType = this.typeRef(declaration.type);
+
+            // The members of an object type, as an interface's, such as
+            // get of type Client = { get: (url: string) => Response }
+            const literals = objectTypesOf(declaration.type);
+
+            if (literals.length > 0) {
+                this.members(result, ts.factory.createNodeArray(literals.flatMap(literal => [...literal.members])), memberScope);
+            }
         } else if (ts.isInterfaceDeclaration(declaration)) {
             result.kind = "INTERFACE";
             this.typeParameters(result, declaration.typeParameters);
@@ -1466,6 +1474,21 @@ function isReference(identifier: ts.Identifier): boolean {
         && !(ts.isBindingElement(parent) && parent.name === identifier)
         && !(ts.isFunctionExpression(parent) && parent.name === identifier)
         && !(ts.isMethodDeclaration(parent) && parent.name === identifier);
+}
+
+/**
+ * The object types a type alias is, as in type A = { ... } and
+ * type A = B & { ... }; not those of a union, whose members are not all
+ * there.
+ */
+function objectTypesOf(type: ts.TypeNode): ts.TypeLiteralNode[] {
+    const unwrapped = ts.isParenthesizedTypeNode(type) ? type.type : type;
+
+    if (ts.isTypeLiteralNode(unwrapped)) {
+        return [unwrapped];
+    }
+
+    return ts.isIntersectionTypeNode(unwrapped) ? unwrapped.types.flatMap(objectTypesOf) : [];
 }
 
 /**

@@ -77,7 +77,7 @@ test("detects each package as a module, with its dependencies", () => {
     assert.deepEqual(
         result.modules.map(module => [module.path, module.name, module.files.map(file => file.path)]),
         [
-            [".", "shop", ["src/builtins.ts", "src/index.ts", "src/logging.js", "src/orders.test.ts", "src/orders.ts", "src/server.ts"]],
+            [".", "shop", ["src/builtins.ts", "src/client.ts", "src/index.ts", "src/logging.js", "src/orders.test.ts", "src/orders.ts", "src/server.ts"]],
             ["packages/ui", "@shop/ui", ["packages/ui/src/Button.tsx"]]
         ]
     );
@@ -311,6 +311,29 @@ test("lists an exported default function expression as a function, and classes i
         server.classes?.map(declaration => [declaration.qualifiedName, declaration.nesting, declaration.superClasses?.[0].name]),
         [["src/server:1", "ANONYMOUS", "HTMLElement"]]
     );
+});
+
+test("lists the members of type aliases of object types, and resolves calls through them", () => {
+    const client = file("src/client.ts");
+    const members = (name: string) => {
+        const alias = find(client.classes, name);
+
+        return [...(alias.methods ?? []), ...(alias.fields ?? [])].map(member => member.qualifiedName);
+    };
+
+    assert.deepEqual(members("src/client:Client"), ["src/client:Client.post", "src/client:Client.get", "src/client:Client.baseUrl"]);
+    assert.deepEqual(members("src/client:RetryingClient"), ["src/client:RetryingClient.retry"]);
+    assert.deepEqual(members("src/client:Result"), []);
+
+    const use = find(client.functions, "src/client:use");
+
+    assert.deepEqual(targets(use, "calls"), [
+        "METHOD src/client:Client.post",
+        "METHOD src/client:RetryingClient.retry",
+        "METHOD client",
+        "METHOD src/client:Client.get"
+    ]);
+    assert.deepEqual(targets(use, "fieldAccesses"), ["READ src/client:Client.baseUrl"]);
 });
 
 test("lists rendered components as calls", () => {
