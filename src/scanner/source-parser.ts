@@ -15,7 +15,7 @@ import type {
     TypeRef,
     TypeUse
 } from "../generated/ScanResult.js";
-import { libraryDeclarations } from "./library-declarations.js";
+import { libraryDeclarations, packageDeclarations } from "./library-declarations.js";
 
 /**
  * Where a declaration is: its lines and columns, starting at 1, with the
@@ -75,12 +75,14 @@ interface Declared {
  * "src/orders:Orders.find.Query", with anonymous ones numbered from 1.
  *
  * Declarations of TypeScript's built-in library, the JavaScript built-ins
- * and the DOM, have their global names, e.g. "Array.isArray"; see
- * {@link libraryDeclarations}.
+ * and the DOM, have their global names, e.g. "Array.isArray", and those of
+ * packages the module they are imported from and their name, e.g.
+ * "react:useState"; see {@link libraryDeclarations} and
+ * {@link packageDeclarations}.
  *
- * A reference resolves when it is to a declaration in the target or the
- * built-in library; else its target is the name as written, e.g.
- * "express.Router".
+ * A reference resolves when it is to a declaration in the target, the
+ * built-in library or a package the program has the types of; else its
+ * target is the name as written, e.g. "express.Router".
  */
 export class SourceParser {
 
@@ -109,17 +111,20 @@ export class SourceParser {
     constructor(program: ts.Program) {
         this.checker = program.getTypeChecker();
 
-        const library = libraryDeclarations(
-            program.getSourceFiles().filter(sourceFile => program.isSourceFileDefaultLibrary(sourceFile))
-        );
+        const roots = new Set(program.getRootFileNames().map(fileName => ts.sys.resolvePath(fileName)));
 
-        for (const [declarations, kind] of [
-            [library.methods, this.methods],
-            [library.fields, this.fields],
-            [library.classes, this.classes]
-        ] as const) {
-            for (const [declaration, name] of declarations) {
-                this.register(name, kind, declaration);
+        for (const library of [
+            libraryDeclarations(program.getSourceFiles().filter(sourceFile => program.isSourceFileDefaultLibrary(sourceFile))),
+            packageDeclarations(program, sourceFile => roots.has(ts.sys.resolvePath(sourceFile.fileName)))
+        ]) {
+            for (const [declarations, kind] of [
+                [library.methods, this.methods],
+                [library.fields, this.fields],
+                [library.classes, this.classes]
+            ] as const) {
+                for (const [declaration, name] of declarations) {
+                    this.register(name, kind, declaration);
+                }
             }
         }
     }
@@ -893,7 +898,21 @@ export class SourceParser {
             // Resolved through the callee instead
         }
 
-        let target = declaration && this.methods.has(declaration) ? this.names.get(declaration) : undefined;
+        let target = declaration && this.methods.has(declaration) && !isSignatureOfType(declaration)
+            ? this.names.get(declaration)
+            : undefined;
+
+        if (target === undefined && !isConstructor) {
+            // A function a property or variable holds, such as app.get of
+            // express or test of ava, after the property or variable
+            const holder = this.declarationOf(node.expression);
+
+            if (holder && this.fields.has(holder)) {
+                target = this.names.get(holder);
+            } else if (declaration && this.methods.has(declaration)) {
+                target = this.names.get(declaration);
+            }
+        }
 
         if (target === undefined) {
             // The class of a constructor that is not declared, or a function
@@ -976,6 +995,11 @@ export class SourceParser {
         }
 
         if (this.fields.has(declaration)) {
+            if (isCalled) {
+                // The call is named after it, such as app.get(...)
+                return;
+            }
+
             fieldAccesses.push({
                 target: this.names.get(declaration)!,
                 access: accessOf(node),
@@ -1432,6 +1456,15 @@ function isReference(identifier: ts.Identifier): boolean {
         && !(ts.isBindingElement(parent) && parent.name === identifier)
         && !(ts.isFunctionExpression(parent) && parent.name === identifier)
         && !(ts.isMethodDeclaration(parent) && parent.name === identifier);
+}
+
+/**
+ * Whether a declaration is the call signature of a type, such as that of
+ * interface Handler { (request: Request): void }, which a call reaches
+ * through what holds the function.
+ */
+function isSignatureOfType(declaration: ts.Node): boolean {
+    return ts.isCallSignatureDeclaration(declaration) || ts.isFunctionTypeNode(declaration);
 }
 
 /**

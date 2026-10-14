@@ -53,7 +53,7 @@ for (const [when, args, message] of [
     ["without --path", ["--output", "result.json"], "Missing required argument: --path"],
     ["without --output", ["--path", "."], "Missing required argument: --output"],
     ["when an argument has no value", ["--path"], "Missing value for --path"],
-    ["for an unknown argument", ["--path", ".", "--output", "x", "--verbose"], "Unknown argument: --verbose"]
+    ["for an unknown argument", ["--path", ".", "--output", "x", "--quiet"], "Unknown argument: --quiet"]
 ] as const) {
     test(`fails ${when}`, () => {
         const process = run(...args);

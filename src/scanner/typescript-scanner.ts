@@ -1,13 +1,27 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import ts from "typescript-api";
 import type { File, GraphNousScanResult, Module } from "../generated/ScanResult.js";
 import { detectBuildSystem, detectModules, detectNodeVersion } from "./project.js";
 import { language, moduleOf, sourceFiles, sourceSet, withoutExtension } from "./source-files.js";
 import { SourceParser } from "./source-parser.js";
 
+/**
+ * The packages the scanned code uses, as {@link providePackages} provides
+ * them.
+ */
+export interface Packages {
+    /** A node_modules directory to resolve imports in. */
+    nodeModules?: string;
+    /** The @types packages with global declarations, such as "node". */
+    types: string[];
+}
+
 export class TypeScriptScanner {
+
+    constructor(private readonly packages: Packages = { types: [] }) {
+    }
 
     /**
      * Scans the target, a directory of the repository with a package.json:
@@ -23,7 +37,7 @@ export class TypeScriptScanner {
         const modules = detectModules(targetPath, warn);
         const paths = sourceFiles(targetPath);
 
-        const program = createProgram(targetPath, paths);
+        const program = createProgram(targetPath, paths, this.packages);
         const parser = new SourceParser(program);
 
         const modulesByPath = new Map(modules.map(module => [module.path, module]));
@@ -108,10 +122,10 @@ export class TypeScriptScanner {
 /**
  * A program of the files, to resolve what they refer to. It takes the
  * compiler options of the target's tsconfig.json, such as its path
- * aliases and built-in library, but leaves out dependencies: references
- * resolve to the target's own declarations and to the built-in library.
+ * aliases and built-in library, and resolves imports of packages in the
+ * node_modules of the repository and of the provided packages.
  */
-function createProgram(targetPath: string, paths: string[]): ts.Program {
+function createProgram(targetPath: string, paths: string[], packages: Packages): ts.Program {
     let options: ts.CompilerOptions = {
         module: ts.ModuleKind.ESNext,
         moduleResolution: ts.ModuleResolutionKind.Bundler,
@@ -132,9 +146,7 @@ function createProgram(targetPath: string, paths: string[]): ts.Program {
         }
     }
 
-    return ts.createProgram(
-        paths.map(path => join(targetPath, path)),
-        {
+    options = {
             ...options,
             allowJs: true,
             checkJs: false,
@@ -142,13 +154,64 @@ function createProgram(targetPath: string, paths: string[]): ts.Program {
             // The built-in library of the target's tsconfig, else the
             // newest with the DOM, so calls into it resolve
             lib: options.lib ?? (options.target === undefined ? ["lib.esnext.full.d.ts"] : undefined),
-            noResolve: true,
-            types: [],
+            // Packages the project declares with global declarations,
+            // such as @types/node, unless the tsconfig names its own
+            types: options.types ?? packages.types,
             skipLibCheck: true,
             composite: false,
             incremental: false
-        }
-    );
+    };
+
+    return ts.createProgram({
+        rootNames: paths.map(path => join(targetPath, path)),
+        options,
+        host: compilerHost(options, packages)
+    });
+}
+
+/**
+ * A compiler host that resolves imports as the project does, and those it
+ * cannot in the node_modules of the provided packages: those of the
+ * scanned code, and those of the packages, which the package cache keeps
+ * apart.
+ */
+function compilerHost(options: ts.CompilerOptions, packages: Packages): ts.CompilerHost {
+    const host = ts.createCompilerHost(options);
+    const nodeModules = packages.nodeModules;
+
+    if (nodeModules === undefined) {
+        return host;
+    }
+
+    // Resolves as from a file next to the node_modules
+    const fallback = join(dirname(nodeModules), "index.ts");
+    const moduleCache = ts.createModuleResolutionCache(host.getCurrentDirectory(), name => name, options);
+    const typeCache = ts.createTypeReferenceDirectiveResolutionCache(host.getCurrentDirectory(), name => name, options);
+
+    host.resolveModuleNameLiterals = (literals, containingFile, redirected, compilerOptions, sourceFile) =>
+        literals.map(literal => {
+            const mode = ts.getModeForUsageLocation(sourceFile, literal, compilerOptions);
+            const resolved = ts.resolveModuleName(literal.text, containingFile, compilerOptions, host, moduleCache, redirected, mode);
+
+            return resolved.resolvedModule || literal.text.startsWith(".")
+                ? resolved
+                : ts.resolveModuleName(literal.text, fallback, compilerOptions, host, moduleCache, redirected, mode);
+        });
+
+    host.resolveTypeReferenceDirectiveReferences = (references, containingFile, redirected, compilerOptions, sourceFile) =>
+        references.map(reference => {
+            const name = typeof reference === "string" ? reference : reference.fileName.toLowerCase();
+            const mode = typeof reference === "string" || !sourceFile
+                ? undefined
+                : ts.getModeForFileReference(reference, sourceFile.impliedNodeFormat);
+            const resolved = ts.resolveTypeReferenceDirective(name, containingFile, compilerOptions, host, redirected, typeCache, mode);
+
+            return resolved.resolvedTypeReferenceDirective
+                ? resolved
+                : ts.resolveTypeReferenceDirective(name, fallback, compilerOptions, host, redirected, typeCache, mode);
+        });
+
+    return host;
 }
 
 /**

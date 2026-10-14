@@ -26,8 +26,14 @@ FROM node:24-alpine
 # The scanner, with TypeScript's built-in library next to it
 COPY --from=build /build/build/ /opt/graphnous/
 
-# Scans run as the image's unprivileged user; the repository is mounted
-# read-only
+# The package cache, for a volume to keep downloaded packages for the next
+# scans; scans run as the image's unprivileged user, and the repository is
+# mounted read-only
+RUN mkdir /npm-cache && chown node /npm-cache
+
+# Downloads go through the proxy of HTTPS_PROXY and NO_PROXY, when set
+ENV NODE_USE_ENV_PROXY=1
+
 USER node
 
 ENTRYPOINT ["node", "/opt/graphnous/scanner.js"]
