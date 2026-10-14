@@ -5,6 +5,8 @@ import ts from "typescript-api";
 import type { File, GraphNousScanResult, Module } from "../generated/ScanResult.js";
 import { detectBuildSystem, detectModules, detectNodeVersion } from "./project.js";
 import { language, moduleOf, sourceFiles, sourceSet, withoutExtension } from "./source-files.js";
+import { DependencyGraph } from "../npm/dependency-graph.js";
+import { addTransitiveDependencies } from "../npm/transitive-dependencies.js";
 import { configOptions, ModuleResolver } from "./module-resolution.js";
 import { SourceParser } from "./source-parser.js";
 
@@ -36,6 +38,11 @@ export class TypeScriptScanner {
         const targetPath = resolve(repository, target);
 
         const modules = detectModules(targetPath, warn);
+        const graph = DependencyGraph.read(repository, targetPath);
+
+        if (graph) {
+            addTransitiveDependencies(modules, targetPath, graph);
+        }
         const paths = sourceFiles(targetPath);
 
         // The packages of the workspace by name, to resolve imports of

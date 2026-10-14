@@ -1,0 +1,10 @@
+{
+  "name": "locks",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "devDependencies": {
+    "debug": "2.6.9"
+  }
+}

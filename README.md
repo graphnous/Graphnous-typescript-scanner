@@ -40,6 +40,11 @@ node build/scanner.js --path . --target . --output scan-result.json
 - A module for each `package.json` of the target, such as the packages of a
   workspace, with their dependencies, and the files of each, as production
   or test code.
+  The dependencies their dependencies pull in are listed too, with
+  `transitive` set, in the versions the lock file installs
+  (`package-lock.json` of npm 7 and later, `pnpm-lock.yaml`, `yarn.lock` of
+  Yarn 1 and Berry, or `bun.lock`), with the scope of the dependency they
+  come through.
 - Classes, interfaces, enums and type aliases, with their members, those of
   type aliases of object types such as `type Client = { get(): ... }`
   included, and the
