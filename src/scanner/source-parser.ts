@@ -15,6 +15,7 @@ import type {
     TypeRef,
     TypeUse
 } from "../generated/ScanResult.js";
+import { libraryDeclarations, packageDeclarations } from "./library-declarations.js";
 
 /**
  * Where a declaration is: its lines and columns, starting at 1, with the
@@ -48,6 +49,17 @@ type ClassLike =
 type FunctionBody = ts.Block | ts.Expression;
 
 /**
+ * What the statements of a file or namespace declare, and their code that
+ * runs when the file is loaded.
+ */
+interface Declared {
+    imports: Import[];
+    functions: Method[];
+    variables: Field[];
+    code: ts.Node[];
+}
+
+/**
  * Turns TypeScript and JavaScript sources into the scan result model.
  *
  * Parsing is two passes: {@link parse} names the declarations of each file,
@@ -62,8 +74,15 @@ type FunctionBody = ts.Block | ts.Expression;
  * anonymous classes are named after the method that declares them, e.g.
  * "src/orders:Orders.find.Query", with anonymous ones numbered from 1.
  *
- * A reference resolves when it is to a declaration in the target; else its
- * target is the name as written, e.g. "console.log".
+ * Declarations of TypeScript's built-in library, the JavaScript built-ins
+ * and the DOM, have their global names, e.g. "Array.isArray", and those of
+ * packages the module they are imported from and their name, e.g.
+ * "react:useState"; see {@link libraryDeclarations} and
+ * {@link packageDeclarations}.
+ *
+ * A reference resolves when it is to a declaration in the target, the
+ * built-in library or a package the program has the types of; else its
+ * target is the name as written, e.g. "express.Router".
  */
 export class SourceParser {
 
@@ -91,6 +110,23 @@ export class SourceParser {
 
     constructor(program: ts.Program) {
         this.checker = program.getTypeChecker();
+
+        const roots = new Set(program.getRootFileNames().map(fileName => ts.sys.resolvePath(fileName)));
+
+        for (const library of [
+            libraryDeclarations(program.getSourceFiles().filter(sourceFile => program.isSourceFileDefaultLibrary(sourceFile))),
+            packageDeclarations(program, sourceFile => roots.has(ts.sys.resolvePath(sourceFile.fileName)))
+        ]) {
+            for (const [declarations, kind] of [
+                [library.methods, this.methods],
+                [library.fields, this.fields],
+                [library.classes, this.classes]
+            ] as const) {
+                for (const [declaration, name] of declarations) {
+                    this.register(name, kind, declaration);
+                }
+            }
+        }
     }
 
     /**
@@ -106,13 +142,12 @@ export class SourceParser {
         const classes: Class[] = [];
         const functions: Method[] = [];
         const variables: Field[] = [];
+        const code: ts.Node[] = [];
 
         this.statements(
             sourceFile.statements,
             { prefix: `${path}:`, classes },
-            imports,
-            functions,
-            variables
+            { imports, functions, variables, code }
         );
 
         if (imports.length > 0) {
@@ -127,6 +162,10 @@ export class SourceParser {
 
         if (variables.length > 0) {
             file.variables = variables;
+        }
+
+        if (code.length > 0) {
+            this.pending.push(() => this.body(file, code, sourceFile));
         }
     }
 
@@ -147,10 +186,9 @@ export class SourceParser {
     private statements(
         statements: ts.NodeArray<ts.Statement>,
         scope: Scope,
-        imports: Import[],
-        functions: Method[],
-        variables: Field[]
+        declared: Declared
     ): void {
+        const { imports, functions } = declared;
         const seen = new Set<ts.Symbol>();
 
         for (const statement of statements) {
@@ -181,11 +219,47 @@ export class SourceParser {
                     functions.push(this.functionOf(this.implementationOf(statement), scope));
                 }
             } else if (ts.isVariableStatement(statement)) {
-                this.variableStatement(statement, scope, functions, variables);
-            } else if (ts.isModuleDeclaration(statement) && ts.isIdentifier(statement.name)) {
-                this.namespace(statement, scope, imports, functions, variables);
+                this.variableStatement(statement, scope, declared);
+            } else if (ts.isModuleDeclaration(statement)) {
+                // Not declare module "x" { } nor declare global { }
+                if (ts.isIdentifier(statement.name)) {
+                    this.namespace(statement, scope, declared);
+                }
+            } else if (ts.isExportAssignment(statement)) {
+                const expression = skipParentheses(statement.expression);
+
+                if (!statement.isExportEquals && isFunctionExpression(expression)) {
+                    // export default () => { }, as export default function () { }
+                    functions.push(this.method(
+                        "default",
+                        qualify(scope.prefix, "default"),
+                        "FUNCTION",
+                        statement,
+                        expression,
+                        ["EXPORT_DEFAULT", ...this.modifiers(expression)],
+                        scope,
+                        [statement, expression]
+                    ));
+                } else {
+                    this.code(statement, scope, declared);
+                }
+            } else if (!ts.isImportEqualsDeclaration(statement)
+                && !ts.isExportDeclaration(statement)
+                && !ts.isEmptyStatement(statement)
+                && !ts.isMissingDeclaration(statement)) {
+                this.code(statement, scope, declared);
             }
         }
+    }
+
+    /**
+     * Code that runs when the file is loaded, such as app.use(...) or the
+     * initializer of a variable, whose calls, field accesses and type uses
+     * are the file's. Classes in it are listed with those of the file.
+     */
+    private code(node: ts.Node, scope: Scope, declared: Declared): void {
+        this.localClasses(node, scope);
+        declared.code.push(node);
     }
 
     /**
@@ -195,18 +269,16 @@ export class SourceParser {
     private namespace(
         declaration: ts.ModuleDeclaration,
         scope: Scope,
-        imports: Import[],
-        functions: Method[],
-        variables: Field[]
+        declared: Declared
     ): void {
         const prefix = qualify(scope.prefix, declaration.name.text);
         const body = declaration.body;
 
         if (body && ts.isModuleBlock(body)) {
-            this.statements(body.statements, { ...scope, prefix }, imports, functions, variables);
+            this.statements(body.statements, { ...scope, prefix }, declared);
         } else if (body && ts.isModuleDeclaration(body)) {
             // namespace A.B { }
-            this.namespace(body, { ...scope, prefix }, imports, functions, variables);
+            this.namespace(body, { ...scope, prefix }, declared);
         }
     }
 
@@ -223,9 +295,9 @@ export class SourceParser {
     private variableStatement(
         statement: ts.VariableStatement,
         scope: Scope,
-        functions: Method[],
-        variables: Field[]
+        declared: Declared
     ): void {
+        const { functions, variables } = declared;
         const declarations = statement.declarationList.declarations;
         const isConst = (statement.declarationList.flags & ts.NodeFlags.Const) !== 0;
 
@@ -250,6 +322,10 @@ export class SourceParser {
             } else if (ts.isIdentifier(declaration.name) && initializer && ts.isClassExpression(initializer)) {
                 scope.classes.push(this.classOf(initializer, scope, "TOP_LEVEL", declaration.name.text, [declaration]));
             } else {
+                if (declaration.initializer) {
+                    this.code(declaration.initializer, scope, declared);
+                }
+
                 for (const binding of bindingNames(declaration.name)) {
                     const field = this.field(
                         binding.name.text,
@@ -312,6 +388,14 @@ export class SourceParser {
             result.kind = "TYPE_ALIAS";
             this.typeParameters(result, declaration.typeParameters);
             result.aliasedType = this.typeRef(declaration.type);
+
+            // The members of an object type, as an interface's, such as
+            // get of type Client = { get: (url: string) => Response }
+            const literals = objectTypesOf(declaration.type);
+
+            if (literals.length > 0) {
+                this.members(result, ts.factory.createNodeArray(literals.flatMap(literal => [...literal.members])), memberScope);
+            }
         } else if (ts.isInterfaceDeclaration(declaration)) {
             result.kind = "INTERFACE";
             this.typeParameters(result, declaration.typeParameters);
@@ -555,7 +639,7 @@ export class SourceParser {
             this.localClasses(body, bodyScope);
 
             const sourceFile = this.sourceFile;
-            this.pending.push(() => this.body(result, body, sourceFile));
+            this.pending.push(() => this.body(result, [body], sourceFile));
         }
 
         return result;
@@ -617,7 +701,7 @@ export class SourceParser {
      * listed with the classes of the scope. Those of functions nested in
      * the body belong to the method too.
      */
-    private localClasses(body: FunctionBody, scope: Scope): void {
+    private localClasses(body: ts.Node, scope: Scope): void {
         const visit = (node: ts.Node): void => {
             if (isClassLike(node)) {
                 const variable = ts.isClassExpression(node) && ts.isVariableDeclaration(node.parent)
@@ -739,9 +823,10 @@ export class SourceParser {
     // References
 
     /**
-     * Fills in the calls, field accesses and type uses of a method body.
+     * Fills in the calls, field accesses and type uses of a method body, or
+     * of the code at the top level of a file.
      */
-    private body(method: Method, body: FunctionBody, sourceFile: ts.SourceFile): void {
+    private body(result: Method | File, body: readonly ts.Node[], sourceFile: ts.SourceFile): void {
         const calls: Call[] = [];
         const fieldAccesses: FieldAccess[] = [];
         const typeUses: TypeUse[] = [];
@@ -794,18 +879,18 @@ export class SourceParser {
             ts.forEachChild(node, visit);
         };
 
-        visit(body);
+        body.forEach(visit);
 
         if (calls.length > 0) {
-            method.calls = calls;
+            result.calls = calls;
         }
 
         if (fieldAccesses.length > 0) {
-            method.fieldAccesses = fieldAccesses;
+            result.fieldAccesses = fieldAccesses;
         }
 
         if (typeUses.length > 0) {
-            method.typeUses = typeUses;
+            result.typeUses = typeUses;
         }
     }
 
@@ -821,7 +906,31 @@ export class SourceParser {
             // Resolved through the callee instead
         }
 
-        let target = declaration && this.methods.has(declaration) ? this.names.get(declaration) : undefined;
+        let target = declaration && this.methods.has(declaration) && !isSignatureOfType(declaration)
+            ? this.names.get(declaration)
+            : undefined;
+
+        if (ts.isNewExpression(node)) {
+            // The constructor of the class created, also when it inherits
+            // the one the signature is declared in
+            const created = this.declarationOf(node.expression);
+
+            if (created && this.classes.has(created)) {
+                target = qualify(this.names.get(created)!, "constructor");
+            }
+        }
+
+        if (target === undefined && !isConstructor) {
+            // A function a property or variable holds, such as app.get of
+            // express or test of ava, after the property or variable
+            const holder = this.declarationOf(node.expression);
+
+            if (holder && this.fields.has(holder)) {
+                target = this.names.get(holder);
+            } else if (declaration && this.methods.has(declaration)) {
+                target = this.names.get(declaration);
+            }
+        }
 
         if (target === undefined) {
             // The class of a constructor that is not declared, or a function
@@ -904,6 +1013,11 @@ export class SourceParser {
         }
 
         if (this.fields.has(declaration)) {
+            if (isCalled) {
+                // The call is named after it, such as app.get(...)
+                return;
+            }
+
             fieldAccesses.push({
                 target: this.names.get(declaration)!,
                 access: accessOf(node),
@@ -1360,6 +1474,30 @@ function isReference(identifier: ts.Identifier): boolean {
         && !(ts.isBindingElement(parent) && parent.name === identifier)
         && !(ts.isFunctionExpression(parent) && parent.name === identifier)
         && !(ts.isMethodDeclaration(parent) && parent.name === identifier);
+}
+
+/**
+ * The object types a type alias is, as in type A = { ... } and
+ * type A = B & { ... }; not those of a union, whose members are not all
+ * there.
+ */
+function objectTypesOf(type: ts.TypeNode): ts.TypeLiteralNode[] {
+    const unwrapped = ts.isParenthesizedTypeNode(type) ? type.type : type;
+
+    if (ts.isTypeLiteralNode(unwrapped)) {
+        return [unwrapped];
+    }
+
+    return ts.isIntersectionTypeNode(unwrapped) ? unwrapped.types.flatMap(objectTypesOf) : [];
+}
+
+/**
+ * Whether a declaration is the call signature of a type, such as that of
+ * interface Handler { (request: Request): void }, which a call reaches
+ * through what holds the function.
+ */
+function isSignatureOfType(declaration: ts.Node): boolean {
+    return ts.isCallSignatureDeclaration(declaration) || ts.isFunctionTypeNode(declaration);
 }
 
 /**

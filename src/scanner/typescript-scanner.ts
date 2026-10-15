@@ -1,13 +1,30 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import ts from "typescript-api";
 import type { File, GraphNousScanResult, Module } from "../generated/ScanResult.js";
 import { detectBuildSystem, detectModules, detectNodeVersion } from "./project.js";
 import { language, moduleOf, sourceFiles, sourceSet, withoutExtension } from "./source-files.js";
+import { DependencyGraph } from "../npm/dependency-graph.js";
+import { addTransitiveDependencies } from "../npm/transitive-dependencies.js";
+import { configOptions, ModuleResolver } from "./module-resolution.js";
 import { SourceParser } from "./source-parser.js";
 
+/**
+ * The packages the scanned code uses, as {@link providePackages} provides
+ * them.
+ */
+export interface Packages {
+    /** A node_modules directory to resolve imports in. */
+    nodeModules?: string;
+    /** The @types packages with global declarations, such as "node". */
+    types: string[];
+}
+
 export class TypeScriptScanner {
+
+    constructor(private readonly packages: Packages = { types: [] }) {
+    }
 
     /**
      * Scans the target, a directory of the repository with a package.json:
@@ -21,9 +38,20 @@ export class TypeScriptScanner {
         const targetPath = resolve(repository, target);
 
         const modules = detectModules(targetPath, warn);
+        const graph = DependencyGraph.read(repository, targetPath);
+
+        if (graph) {
+            addTransitiveDependencies(modules, targetPath, graph);
+        }
         const paths = sourceFiles(targetPath);
 
-        const program = createProgram(targetPath, paths);
+        // The packages of the workspace by name, to resolve imports of
+        // them to their sources
+        const workspace = new Map(modules
+            .filter(module => module.name !== undefined && declaredName(join(targetPath, module.path)) === module.name)
+            .map(module => [module.name!, join(targetPath, module.path)]));
+
+        const program = createProgram(targetPath, paths, this.packages, workspace);
         const parser = new SourceParser(program);
 
         const modulesByPath = new Map(modules.map(module => [module.path, module]));
@@ -108,10 +136,15 @@ export class TypeScriptScanner {
 /**
  * A program of the files, to resolve what they refer to. It takes the
  * compiler options of the target's tsconfig.json, such as its path
- * aliases, but leaves out the standard library and dependencies: only
- * references to the target's own declarations resolve.
+ * aliases and built-in library, and resolves imports as
+ * {@link ModuleResolver} does.
  */
-function createProgram(targetPath: string, paths: string[]): ts.Program {
+function createProgram(
+    targetPath: string,
+    paths: string[],
+    packages: Packages,
+    workspace: Map<string, string>
+): ts.Program {
     let options: ts.CompilerOptions = {
         module: ts.ModuleKind.ESNext,
         moduleResolution: ts.ModuleResolutionKind.Bundler,
@@ -119,34 +152,87 @@ function createProgram(targetPath: string, paths: string[]): ts.Program {
         experimentalDecorators: true
     };
 
-    const configPath = join(targetPath, "tsconfig.json");
+    const configPath = ["tsconfig.json", "jsconfig.json"].map(name => join(targetPath, name)).find(path => existsSync(path));
 
-    if (existsSync(configPath)) {
-        const parsed = ts.getParsedCommandLineOfConfigFile(configPath, {}, {
-            ...ts.sys,
-            onUnRecoverableConfigFileDiagnostic: () => {}
-        });
-
-        if (parsed) {
-            options = { ...options, ...parsed.options };
-        }
+    if (configPath) {
+        options = configOptions(configPath, options);
     }
 
-    return ts.createProgram(
-        paths.map(path => join(targetPath, path)),
-        {
+    // What the program needs whatever the configuration says
+    const forced: ts.CompilerOptions = {
+        allowJs: true,
+        checkJs: false,
+        noEmit: true,
+        skipLibCheck: true,
+        composite: false,
+        incremental: false
+    };
+
+    options = {
             ...options,
-            allowJs: true,
+            ...forced,
             checkJs: false,
             noEmit: true,
-            noLib: true,
-            noResolve: true,
-            types: [],
-            skipLibCheck: true,
-            composite: false,
-            incremental: false
-        }
-    );
+            // The built-in library of the target's tsconfig, else the
+            // newest with the DOM, so calls into it resolve
+            lib: options.lib ?? (options.target === undefined ? ["lib.esnext.full.d.ts"] : undefined),
+            // Packages the project declares with global declarations,
+            // such as @types/node, unless the tsconfig names its own
+            types: options.types ?? packages.types
+    };
+
+    return ts.createProgram({
+        rootNames: paths.map(path => join(targetPath, path)),
+        options,
+        host: compilerHost(targetPath, options, forced, packages, workspace)
+    });
+}
+
+/**
+ * A compiler host that resolves imports with a {@link ModuleResolver}.
+ */
+function compilerHost(
+    targetPath: string,
+    options: ts.CompilerOptions,
+    forced: ts.CompilerOptions,
+    packages: Packages,
+    workspace: Map<string, string>
+): ts.CompilerHost {
+    const host = ts.createCompilerHost(options);
+    const resolver = new ModuleResolver(targetPath, options, forced, workspace, packages.nodeModules, host);
+
+    host.resolveModuleNameLiterals = (literals, containingFile, redirected, compilerOptions, sourceFile) =>
+        literals.map(literal => resolver.resolveModule(
+            literal.text,
+            containingFile,
+            redirected,
+            ts.getModeForUsageLocation(sourceFile, literal, compilerOptions)
+        ));
+
+    host.resolveTypeReferenceDirectiveReferences = (references, containingFile, redirected, _compilerOptions, sourceFile) =>
+        references.map(reference => resolver.resolveTypeReference(
+            typeof reference === "string" ? reference : reference.fileName.toLowerCase(),
+            containingFile,
+            redirected,
+            typeof reference === "string" || !sourceFile
+                ? undefined
+                : ts.getModeForFileReference(reference, sourceFile.impliedNodeFormat)
+        ));
+
+    return host;
+}
+
+/**
+ * The name the package.json of a directory declares.
+ */
+function declaredName(directory: string): string | undefined {
+    try {
+        const name = JSON.parse(readFileSync(join(directory, "package.json"), "utf8")).name;
+
+        return typeof name === "string" ? name : undefined;
+    } catch {
+        return undefined;
+    }
 }
 
 /**

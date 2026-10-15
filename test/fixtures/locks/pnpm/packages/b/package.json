@@ -1,0 +1,1 @@
+{ "name": "@locks/b", "version": "1.0.0", "dependencies": { "@locks/a": "workspace:*", "is-odd": "3.0.1" } }

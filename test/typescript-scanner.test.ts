@@ -46,7 +46,7 @@ const orders = file("src/orders.ts");
 const order = find(orders.classes, "src/orders:Order");
 const orderService = find(orders.classes, "src/orders:OrderService");
 
-function targets(method: Method, kind: "calls" | "fieldAccesses" | "typeUses"): string[] {
+function targets(method: Method | File, kind: "calls" | "fieldAccesses" | "typeUses"): string[] {
     return (method[kind] ?? []).map(reference => `${"kind" in reference ? reference.kind : reference.access} ${reference.target}`);
 }
 
@@ -77,7 +77,7 @@ test("detects each package as a module, with its dependencies", () => {
     assert.deepEqual(
         result.modules.map(module => [module.path, module.name, module.files.map(file => file.path)]),
         [
-            [".", "shop", ["src/index.ts", "src/logging.js", "src/orders.test.ts", "src/orders.ts"]],
+            [".", "shop", ["src/builtins.ts", "src/client.ts", "src/index.ts", "src/logging.js", "src/orders.test.ts", "src/orders.ts", "src/server.ts"]],
             ["packages/ui", "@shop/ui", ["packages/ui/src/Button.tsx"]]
         ]
     );
@@ -164,7 +164,7 @@ test("lists decorators as annotations", () => {
     );
 });
 
-test("resolves calls across files, and leaves others as written", () => {
+test("resolves calls across files", () => {
     assert.deepEqual(targets(find(orderService.methods, "src/orders:OrderService.open"), "calls"), [
         "METHOD src/orders:Repository.find",
         "METHOD String",
@@ -176,8 +176,38 @@ test("resolves calls across files, and leaves others as written", () => {
 
     assert.deepEqual(
         find(orderService.methods, "src/orders:OrderService.open").calls?.map(call => call.resolved),
-        [true, false, true, false, true, true]
+        [true, true, true, true, true, true]
     );
+});
+
+test("names the built-in library by its global names, and leaves other calls as written", () => {
+    const builtins = find(file("src/builtins.ts").functions, "src/builtins:builtins");
+
+    assert.deepEqual(targets(builtins, "calls"), [
+        "METHOD Array.isArray",
+        "CONSTRUCTOR TypeError.constructor",
+        "METHOD console.log",
+        "METHOD Math.min",
+        "METHOD Number",
+        "METHOD Array.push",
+        "METHOD Headers.get",
+        "METHOD Intl.NumberFormat.format",
+        "CONSTRUCTOR Intl.NumberFormat.constructor",
+        "METHOD Promise.race",
+        "METHOD Promise.resolve",
+        "METHOD Array.map",
+        "METHOD Map.keys",
+        "CONSTRUCTOR Map.constructor"
+    ]);
+
+    assert.deepEqual(targets(builtins, "fieldAccesses"), ["READ Array.length", "READ console"]);
+    assert.deepEqual(targets(builtins, "typeUses"), ["CLASS_LITERAL String", "INSTANCEOF TypeError"]);
+    assert.deepEqual(builtins.returnType?.references, ["Promise"]);
+    assert.ok(builtins.calls?.every(call => call.resolved));
+
+    const unresolved = file("src/server.ts").calls?.find(call => call.target === "process.on");
+
+    assert.equal(unresolved?.resolved, false);
 });
 
 test("lists the arguments of calls as written", () => {
@@ -195,7 +225,7 @@ test("lists the arguments of calls as written", () => {
 
 test("lists method references", () => {
     assert.deepEqual(targets(find(orderService.methods, "src/orders:OrderService.close"), "calls"), [
-        "METHOD [order].forEach",
+        "METHOD Array.forEach",
         "METHOD_REFERENCE src/orders:OrderService.notify"
     ]);
 });
@@ -243,6 +273,67 @@ test("lists functions and variables of a file", () => {
         ["src/orders:MAX_ITEMS", ["EXPORT", "CONST"]],
         ["src/orders:MIN_ITEMS", ["EXPORT", "CONST"]]
     ]);
+});
+
+test("lists the calls, field accesses and type uses of code at the top level of a file", () => {
+    const server = file("src/server.ts");
+
+    assert.deepEqual(targets(server, "calls"), [
+        "METHOD src/orders:createService",
+        "METHOD src/logging:log",
+        "METHOD src/logging:log",
+        "METHOD process.on",
+        "METHOD src/orders:OrderService.open",
+        "METHOD CustomElementRegistry.define"
+    ]);
+
+    assert.deepEqual(targets(server, "fieldAccesses"), [
+        "READ src/orders:Order.id",
+        "READ src/orders:OrderService.count",
+        "READ src/server:service",
+        "READ src/orders:DEFAULT_STATUS",
+        "READ customElements"
+    ]);
+
+    assert.deepEqual(targets(server, "typeUses"), ["CLASS_LITERAL src/orders:OrderService"]);
+    assert.deepEqual(targets(orders, "fieldAccesses"), ["READ src/orders:Status.OPEN"]);
+});
+
+test("lists an exported default function expression as a function, and classes in top-level code", () => {
+    const server = file("src/server.ts");
+    const exported = find(server.functions, "src/server:default");
+
+    assert.deepEqual(exported.modifiers, ["EXPORT_DEFAULT"]);
+    assert.deepEqual(targets(exported, "calls"), ["CONSTRUCTOR src/orders:Order.constructor"]);
+    assert.deepEqual(server.variables?.map(variable => variable.qualifiedName), ["src/server:service", "src/server:services"]);
+
+    assert.deepEqual(
+        server.classes?.map(declaration => [declaration.qualifiedName, declaration.nesting, declaration.superClasses?.[0].name]),
+        [["src/server:1", "ANONYMOUS", "HTMLElement"]]
+    );
+});
+
+test("lists the members of type aliases of object types, and resolves calls through them", () => {
+    const client = file("src/client.ts");
+    const members = (name: string) => {
+        const alias = find(client.classes, name);
+
+        return [...(alias.methods ?? []), ...(alias.fields ?? [])].map(member => member.qualifiedName);
+    };
+
+    assert.deepEqual(members("src/client:Client"), ["src/client:Client.post", "src/client:Client.get", "src/client:Client.baseUrl"]);
+    assert.deepEqual(members("src/client:RetryingClient"), ["src/client:RetryingClient.retry"]);
+    assert.deepEqual(members("src/client:Result"), []);
+
+    const use = find(client.functions, "src/client:use");
+
+    assert.deepEqual(targets(use, "calls"), [
+        "METHOD src/client:Client.post",
+        "METHOD src/client:RetryingClient.retry",
+        "METHOD client",
+        "METHOD src/client:Client.get"
+    ]);
+    assert.deepEqual(targets(use, "fieldAccesses"), ["READ src/client:Client.baseUrl"]);
 });
 
 test("lists rendered components as calls", () => {

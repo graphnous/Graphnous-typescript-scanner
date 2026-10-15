@@ -1,0 +1,7 @@
+{
+  "name": "@locks/c",
+  "version": "1.0.0",
+  "dependencies": {
+    "@locks/b": "1.0.0"
+  }
+}

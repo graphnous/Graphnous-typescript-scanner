@@ -6,13 +6,14 @@
   "main": "index.js",
   "scripts": {
     "dev": "tsx src/main.ts",
-    "build": "tsc && esbuild dist/main.js --bundle --platform=node --outfile=build/scanner.js",
+    "build": "tsc && esbuild dist/main.js --bundle --platform=node --outfile=build/scanner.js && node scripts/copy-lib.mjs build",
     "start": "node dist/main.js",
     "generate": "curl -fsSL https://graphnous.github.io/graphnous-schemas/schema/scan/scan-result.schema.json | json2ts -o src/generated/ScanResult.ts",
     "test": "tsx --test test/*.test.ts"
   },
   "devDependencies": {
     "@types/node": "^26.6.3",
+    "@types/semver": "^7.8.0",
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1",
     "esbuild": "^0.28.2",
@@ -21,6 +22,8 @@
     "typescript": "^7.0.2"
   },
   "dependencies": {
-    "typescript-api": "npm:typescript@^5.9.3"
+    "semver": "^7.8.5",
+    "typescript-api": "npm:typescript@^5.9.3",
+    "yaml": "^2.9.1"
   }
 }
