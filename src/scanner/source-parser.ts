@@ -454,10 +454,17 @@ export class SourceParser {
         const properties = new Map<string, Field>();
         const callSignatures = members.filter(ts.isCallSignatureDeclaration);
 
+        // What initializers run: the instance ones in the constructor, the
+        // static ones when the class loads
+        const instanceInitializers: ts.Node[] = [];
+        const staticInitializers: ts.Node[] = [];
+
         for (const member of members) {
             const name = member.name && memberName(member.name);
 
-            if (ts.isCallSignatureDeclaration(member)) {
+            if (ts.isClassStaticBlockDeclaration(member)) {
+                staticInitializers.push(member.body);
+            } else if (ts.isCallSignatureDeclaration(member)) {
                 // What calling a value of the type calls, as "call", with
                 // its overloads
                 if (member === callSignatures[0]) {
@@ -575,9 +582,36 @@ export class SourceParser {
 
                     if (initializer && ts.isClassExpression(initializer)) {
                         scope.classes.push(this.classOf(initializer, scope, "MEMBER", name));
+                    } else if (initializer) {
+                        const isStatic = ts.getModifiers(member)?.some(modifier => modifier.kind === ts.SyntaxKind.StaticKeyword);
+
+                        (isStatic ? staticInitializers : instanceInitializers).push(initializer);
                     }
                 }
             }
+        }
+
+        if (instanceInitializers.length > 0) {
+            // In each constructor, or the one the compiler adds
+            const declared = methods.find(method => method.kind === "CONSTRUCTOR");
+            const constructor: Method = declared ?? {
+                name: "constructor",
+                qualifiedName: qualify(scope.prefix, "constructor"),
+                kind: "CONSTRUCTOR"
+            };
+
+            this.initializers(result, methods, constructor, declared === undefined, instanceInitializers, 0);
+        }
+
+        if (staticInitializers.length > 0) {
+            const initializer: Method = {
+                name: "static",
+                qualifiedName: qualify(scope.prefix, "static"),
+                kind: "METHOD",
+                modifiers: ["STATIC"]
+            };
+
+            this.initializers(result, methods, initializer, true, staticInitializers, methods.length);
         }
 
         if (methods.length > 0) {
@@ -587,6 +621,46 @@ export class SourceParser {
         if (fields.length > 0) {
             result.fields = fields;
         }
+    }
+
+    /**
+     * Adds what initializers use to the method that runs them, before what
+     * its body uses; a method that is not declared, such as the constructor
+     * the compiler adds, is listed when they use anything.
+     */
+    private initializers(
+        result: Class,
+        methods: Method[],
+        method: Method,
+        isAdded: boolean,
+        initializers: ts.Node[],
+        index: number
+    ): void {
+        if (isAdded) {
+            methods.splice(index, 0, method);
+        }
+
+        const sourceFile = this.sourceFile;
+
+        this.pending.push(() => {
+            const uses: Method = { name: method.name, qualifiedName: method.qualifiedName };
+
+            this.body(uses, initializers, sourceFile);
+
+            for (const kind of ["calls", "fieldAccesses", "typeUses"] as const) {
+                if (uses[kind]) {
+                    (method[kind] as unknown[]) = [...uses[kind]!, ...method[kind] ?? []];
+                }
+            }
+
+            if (isAdded && !method.calls && !method.fieldAccesses && !method.typeUses) {
+                result.methods = result.methods?.filter(candidate => candidate !== method);
+
+                if (result.methods?.length === 0) {
+                    delete result.methods;
+                }
+            }
+        });
     }
 
     private enumConstant(member: ts.EnumMember, enumName: string): EnumConstant {

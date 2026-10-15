@@ -77,7 +77,7 @@ test("detects each package as a module, with its dependencies", () => {
     assert.deepEqual(
         result.modules.map(module => [module.path, module.name, module.files.map(file => file.path)]),
         [
-            [".", "shop", ["src/builtins.ts", "src/client.ts", "src/index.ts", "src/logging.js", "src/orders.test.ts", "src/orders.ts", "src/server.ts"]],
+            [".", "shop", ["src/builtins.ts", "src/client.ts", "src/index.ts", "src/initializers.ts", "src/logging.js", "src/orders.test.ts", "src/orders.ts", "src/server.ts"]],
             ["packages/ui", "@shop/ui", ["packages/ui/src/Button.tsx"]]
         ]
     );
@@ -354,6 +354,35 @@ test("resolves calls through values of callable types to their call", () => {
         "METHOD src/client:ClientOptions.retry",
         "METHOD src/client:notify"
     ]);
+});
+
+test("gives what initializers use to the constructor and the static method that run them", () => {
+    const initializers = file("src/initializers.ts");
+    const methods = (name: string) => (find(initializers.classes, name).methods ?? [])
+        .map(method => [method.qualifiedName, method.kind, method.modifiers, targets(method, "calls"), targets(method, "fieldAccesses")]);
+
+    assert.deepEqual(methods("src/initializers:Registry"), [
+        [
+            "src/initializers:Registry.constructor",
+            "CONSTRUCTOR",
+            undefined,
+            ["CONSTRUCTOR Map.constructor", "METHOD Date.now"],
+            ["READ src/orders:Status.OPEN", "READ_WRITE src/initializers:Registry.instances"]
+        ],
+        [
+            "src/initializers:Registry.static",
+            "METHOD",
+            ["STATIC"],
+            ["CONSTRUCTOR src/initializers:Registry.constructor", "METHOD src/logging:log"],
+            []
+        ]
+    ]);
+
+    // The constructor the compiler adds, when the initializers use anything
+    assert.deepEqual(methods("src/initializers:Cache"), [
+        ["src/initializers:Cache.constructor", "CONSTRUCTOR", undefined, ["CONSTRUCTOR Map.constructor"], []]
+    ]);
+    assert.deepEqual(methods("src/initializers:Plain"), []);
 });
 
 test("lists rendered components as calls", () => {
