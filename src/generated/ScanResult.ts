@@ -55,6 +55,10 @@ export interface Module {
   files: File[];
   packages?: Package[];
   dependencies?: Dependency[];
+  /**
+   * The configuration properties of the module that its code refers to or that name what it connects to, from the files its framework reads, such as application.properties and application.yml in Spring Boot, with those of each profile. Scanners record the keys the code refers to: in ${...} placeholders of annotation and call arguments, such as @KafkaListener(topics = "${orders.topic}") or @Value("${orders.topic}"); the keys under the prefix of a class bound to configuration, such as @ConfigurationProperties("app.kafka"); and the keys the values of those refer to in turn. And they record the keys a framework reads that name a destination or a path, such as the destinations of Spring Cloud Stream bindings, spring.kafka.template.default-topic or server.servlet.context-path, as each scanner lists them. Never secrets, whatever refers to them: left out are properties whose key names a secret, that is, contains password, passwd, secret, token, credential, apikey, accesskey, privatekey or authorization, in any case and ignoring "-", "_" and ".", and values that hold one: a url with a password, as in jdbc:postgresql://app:secret@db/orders, a value with password=, or a private key. Environment variables and files outside the module are not read. Absent when the scanner reads no configuration.
+   */
+  configuration?: ConfigurationProperty[];
 }
 export interface File {
   path: string;
@@ -277,6 +281,9 @@ export interface Annotation {
    * The column on endLine it ends at, inclusive.
    */
   endColumn?: number;
+  /**
+   * The arguments, by name, as JSON values: literals as strings, numbers and booleans; arrays as lists; class literals as the qualified type with .class, e.g. "java.lang.String.class"; nested annotations as annotations. A constant whose value the scanner knows, such as Topics.CREATED, or an expression of them, such as "/api" + Paths.ORDERS, is its value, as in Field.constant, e.g. "/api/orders". Other references, such as enum constants, are their qualified name, e.g. "org.springframework.web.bind.annotation.RequestMethod.GET", and anything else is its source. The argument of a single-member annotation, such as @Path("/orders"), is named "value", as in Java; the arguments of a TypeScript decorator are encoded the same way.
+   */
   arguments?: {
     [k: string]: unknown;
   };
@@ -457,6 +464,10 @@ export interface Argument {
    */
   value: string;
   /**
+   * The value of the argument when it is a constant expression the scanner can compute, as in Field.constant: for a literal, a constant such as Topics.CREATED, or an expression of them such as "/api" + Paths.ORDERS, e.g. "orders.created" or "/api/orders". It is computed from the whole expression, also when value is cut off. Absent for any other argument, and for a constant that names a secret.
+   */
+  constant?: string;
+  /**
    * Whether the argument is spread, as ...ids in a call or {...props} in a JSX element. What it passes is then not known from the source: any number of arguments, or attributes of any name.
    */
   spread?: boolean;
@@ -524,6 +535,10 @@ export interface TypeUse {
 export interface Field {
   name: string;
   type?: TypeRef4;
+  /**
+   * The value of a constant, as the scanner computes it from the source: of a field or variable that cannot be assigned again and whose initializer is a constant expression, of literals and other constants. Examples are "orders.created" for static final String CREATED = "orders." + EVENT in Java with static final String EVENT = "created", and for export const CREATED = `orders.${EVENT}` in TypeScript with const EVENT = "created". A string is its text, without quotes or escapes; a number, character or boolean is its text, e.g. "3" or "true". Absent when the value is not known from the source, such as one read from the environment or returned by a call; when it is a string of more than 1000 characters; and when the name of the field or variable names a secret, as Module.configuration describes, such as API_KEY or dbPassword. Scanners never record secrets.
+   */
+  constant?: string;
   qualifiedName?: string;
   /**
    * The line the declaration, including its annotations and initializer, starts on, starting at 1.
@@ -582,4 +597,29 @@ export interface Dependency {
    * The path of the module in this scan result it refers to, when it is another module of the same target rather than an external library.
    */
   module?: string;
+}
+/**
+ * A configuration property, as written in a configuration file.
+ */
+export interface ConfigurationProperty {
+  /**
+   * The key, with the keys of nested maps joined by dots and the items of lists as [index], as written, e.g. "spring.kafka.template.default-topic" or "app.topics[0]".
+   */
+  key: string;
+  /**
+   * The value as written, without quotes: a number or boolean as its text, e.g. "3" or "true", and placeholders as they are, e.g. "${ORDERS_TOPIC:orders.created}", as the code that reads it resolves them.
+   */
+  value: string;
+  /**
+   * The path of the file, relative to the target, e.g. "src/main/resources/application-prod.yml".
+   */
+  file: string;
+  /**
+   * The profile the property is for, from the name of its file, e.g. "prod" for application-prod.yml, or from the document of a YAML file it is in, e.g. spring.config.activate.on-profile: prod. Absent for the default configuration.
+   */
+  profile?: string;
+  /**
+   * The line of the file the property is on, starting at 1.
+   */
+  line?: number;
 }

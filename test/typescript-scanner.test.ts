@@ -218,7 +218,7 @@ test("lists the arguments of calls as written", () => {
         [{ value: "id" }],
         [{ value: "String(id)" }],
         [{ value: "id" }],
-        [{ value: "\"closed\"" }],
+        [{ value: "\"closed\"", constant: "closed" }],
         [{ value: "order" }]
     ]);
 });
@@ -402,7 +402,7 @@ test("lists the attributes of rendered components as named arguments", () => {
 
     assert.deepEqual(
         find(functions, "packages/ui/src/Button:ClosedButton").calls?.map(call => call.arguments),
-        [[{ value: "props", spread: true }, { name: "title", value: "\"Closed\"" }, { name: "disabled", value: "true" }]]
+        [[{ value: "props", spread: true }, { name: "title", value: "\"Closed\"", constant: "Closed" }, { name: "disabled", value: "true" }]]
     );
 });
 

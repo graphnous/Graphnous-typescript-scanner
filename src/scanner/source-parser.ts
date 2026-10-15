@@ -16,7 +16,9 @@ import type {
     TypeUse
 } from "../generated/ScanResult.js";
 import type { TemplateCheck } from "./angular-templates.js";
+import { Constants } from "./constants.js";
 import { libraryDeclarations, packageDeclarations } from "./library-declarations.js";
+import { holdsSecret } from "./secrets.js";
 
 /**
  * Where a declaration is: its lines and columns, starting at 1, with the
@@ -89,6 +91,8 @@ export class SourceParser {
 
     private readonly checker: ts.TypeChecker;
 
+    private readonly constants: Constants;
+
     /** The qualified names of the declarations of the target. */
     private readonly names = new Map<ts.Node, string>();
 
@@ -114,6 +118,7 @@ export class SourceParser {
 
     constructor(program: ts.Program) {
         this.checker = program.getTypeChecker();
+        this.constants = new Constants(this.checker);
 
         const roots = new Set(program.getRootFileNames().map(fileName => ts.sys.resolvePath(fileName)));
 
@@ -528,6 +533,10 @@ export class SourceParser {
                         modifiers.push("CONST");
                     }
 
+                    if (binding === declaration) {
+                        setConstant(field, this.constants.textOf(declaration));
+                    }
+
                     setModifiers(field, modifiers);
                     variables.push(field);
                 }
@@ -764,6 +773,10 @@ export class SourceParser {
                     ));
                 } else {
                     const field = this.field(name, qualify(scope.prefix, name), member, member.type, [member]);
+
+                    if (ts.isPropertyDeclaration(member)) {
+                        setConstant(field, this.constants.textOf(member));
+                    }
 
                     setModifiers(field, this.modifiers(member));
                     this.annotations(field, member);
@@ -1092,6 +1105,13 @@ export class SourceParser {
             return Object.fromEntries(entries);
         }
 
+        // A constant, such as Paths.ORDERS or `${PREFIX}/orders`, is its value
+        const constant = this.constants.value(expression);
+
+        if (constant !== undefined && !(typeof constant === "string" && holdsSecret(constant))) {
+            return constant;
+        }
+
         return text(expression, sourceFile);
     }
 
@@ -1233,7 +1253,7 @@ export class SourceParser {
             target: target ?? writtenName(callee, sourceFile),
             kind,
             // new Order without parentheses passes nothing
-            arguments: (node.arguments ?? []).map(argument => callArgument(argument, sourceFile)),
+            arguments: (node.arguments ?? []).map(argument => callArgument(argument, sourceFile, this.constants)),
             ...this.location(node, sourceFile),
             resolved: target !== undefined
         };
@@ -1251,7 +1271,7 @@ export class SourceParser {
             return {
                 target: this.names.get(declaration)!,
                 kind: "METHOD",
-                arguments: jsxArguments(node, sourceFile),
+                arguments: jsxArguments(node, sourceFile, this.constants),
                 ...this.location(node, sourceFile),
                 resolved: true
             };
@@ -1261,7 +1281,7 @@ export class SourceParser {
             return {
                 target: qualify(this.names.get(declaration)!, "constructor"),
                 kind: "CONSTRUCTOR",
-                arguments: jsxArguments(node, sourceFile),
+                arguments: jsxArguments(node, sourceFile, this.constants),
                 ...this.location(node, sourceFile),
                 resolved: true
             };
@@ -1659,10 +1679,24 @@ function argumentValue(node: ts.Node, sourceFile: ts.SourceFile): string {
 /**
  * An argument of a call, passed by position; ...ids is spread.
  */
-function callArgument(argument: ts.Expression, sourceFile: ts.SourceFile): Argument {
+function callArgument(argument: ts.Expression, sourceFile: ts.SourceFile, constants: Constants): Argument {
     return ts.isSpreadElement(argument)
         ? { value: argumentValue(argument.expression, sourceFile), spread: true }
-        : { value: argumentValue(argument, sourceFile) };
+        : withConstant({ value: argumentValue(argument, sourceFile) }, constants.text(argument));
+}
+
+/**
+ * The argument, with the value of its expression when it is a constant
+ * expression.
+ */
+function withConstant(argument: Argument, constant: string | undefined): Argument {
+    return constant === undefined ? argument : { ...argument, constant };
+}
+
+function setConstant(field: Field, constant: string | undefined): void {
+    if (constant !== undefined) {
+        field.constant = constant;
+    }
 }
 
 /**
@@ -1672,7 +1706,7 @@ function callArgument(argument: ts.Expression, sourceFile: ts.SourceFile): Argum
  * without a value, as disabled. {...props} is spread. Its children are not
  * among them.
  */
-function jsxArguments(node: ts.JsxOpeningLikeElement, sourceFile: ts.SourceFile): Argument[] {
+function jsxArguments(node: ts.JsxOpeningLikeElement, sourceFile: ts.SourceFile, constants: Constants): Argument[] {
     return node.attributes.properties.map(attribute => {
         if (ts.isJsxSpreadAttribute(attribute)) {
             return { value: argumentValue(attribute.expression, sourceFile), spread: true };
@@ -1687,10 +1721,12 @@ function jsxArguments(node: ts.JsxOpeningLikeElement, sourceFile: ts.SourceFile)
 
         if (ts.isJsxExpression(initializer)) {
             // Braces around nothing but a comment pass nothing
-            return { name, value: initializer.expression ? argumentValue(initializer.expression, sourceFile) : "undefined" };
+            return initializer.expression
+                ? withConstant({ name, value: argumentValue(initializer.expression, sourceFile) }, constants.text(initializer.expression))
+                : { name, value: "undefined" };
         }
 
-        return { name, value: argumentValue(initializer, sourceFile) };
+        return withConstant({ name, value: argumentValue(initializer, sourceFile) }, ts.isStringLiteral(initializer) ? constants.text(initializer) : undefined);
     });
 }
 
