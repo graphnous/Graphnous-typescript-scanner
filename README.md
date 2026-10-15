@@ -1,6 +1,7 @@
 # GraphNous TypeScript Scanner
 
-Scans the TypeScript and JavaScript sources of a project and writes a
+Scans the TypeScript and JavaScript sources of a project, and the templates
+of its Angular components, and writes a
 [GraphNous scan result](https://graphnous.github.io/graphnous-schemas/schema/scan/scan-result.schema.json):
 its packages as modules, its files, classes, functions and variables, and
 for each function and method, and the top-level code of each file, the
@@ -69,6 +70,27 @@ the constructor, also the one a class without a declared constructor gets,
 e.g. `src/cache:Cache.constructor` for `entries = new Map()`, and static
 property initializers and `static { }` blocks to a method `static` of the
 class, e.g. `src/registry:Registry.static`.
+
+### Angular templates
+
+The template of an Angular component, inline in its `@Component` or in the
+file its `templateUrl` names, is checked as Angular checks it: what its
+bindings, events and interpolations use belongs to a method `template` of
+the component, e.g. `src/app/orders.component:OrdersComponent.template`.
+
+- `(click)="save(order)"` calls `OrdersComponent.save`, `{{ total }}` reads
+  `OrdersComponent.total`, and `[(ngModel)]="query"` reads and writes
+  `OrdersComponent.query`.
+- The items of `@for` and `*ngFor`, and `@if … as` and `@let`, are typed,
+  so `{{ order.customer.name }}` resolves too.
+- A pipe of the project, `{{ total | money:'EUR' }}`, is a call of its
+  `transform`; other pipes, such as `date`, are kept by their name.
+- An element that is a component or directive of the project, by its
+  `selector`, is a call of its constructor, with its inputs as named
+  arguments.
+
+What a template in a file of its own uses is at its places in that file,
+which is listed as a file with language `HTML`.
 
 A call through a value of a callable type, such as `client(url)` with
 `client: Client` where `type Client = { (url: string): Response }`, or

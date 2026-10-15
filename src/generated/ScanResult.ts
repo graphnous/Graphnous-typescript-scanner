@@ -192,7 +192,7 @@ export interface Class {
    */
   recordComponents?: RecordComponent[];
   /**
-   * Its methods and constructors. What initializers use belongs to the methods that run them: the instance initializers, field initializers and initializer blocks, to each constructor that runs them, and a class without a declared constructor lists the one the compiler adds when they use anything; the static initializers, static field initializers and static blocks, to a method named "static" with the STATIC modifier, e.g. "com.example.Orders.static()" or "src/orders:Orders.static", listed when they use anything.
+   * Its methods and constructors. What initializers use belongs to the methods that run them: the instance initializers, field initializers and initializer blocks, to each constructor that runs them, and a class without a declared constructor lists the one the compiler adds when they use anything; the static initializers, static field initializers and static blocks, to a method named "static" with the STATIC modifier, e.g. "com.example.Orders.static()" or "src/orders:Orders.static", listed when they use anything. What the template of an Angular component uses, inline or in the file its templateUrl names, belongs to a method named "template", e.g. "src/app/orders.component:OrdersComponent.template": its bindings, events and interpolations, its pipes as calls of their transform, and the components and directives its elements use as calls of their constructors. The positions of what a template in a file of its own uses are in that file, which is listed as a file with language HTML.
    */
   methods?: Method[];
   /**

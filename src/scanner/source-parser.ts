@@ -15,6 +15,7 @@ import type {
     TypeRef,
     TypeUse
 } from "../generated/ScanResult.js";
+import type { TemplateCheck } from "./angular-templates.js";
 import { libraryDeclarations, packageDeclarations } from "./library-declarations.js";
 
 /**
@@ -103,6 +104,9 @@ export class SourceParser {
     /** What the second pass fills in. */
     private readonly pending: (() => void)[] = [];
 
+    /** The classes of the target by their qualified names. */
+    private readonly classesByName = new Map<string, Class>();
+
     /** The anonymous classes of each method so far, to number them. */
     private readonly anonymousClasses = new Map<string, number>();
 
@@ -179,6 +183,130 @@ export class SourceParser {
         }
 
         this.pending.length = 0;
+    }
+
+    /**
+     * Gives what the template of an Angular component uses to its method
+     * "template": what the generated code of the template uses, at the
+     * places in the template it was generated from, and the components and
+     * directives its elements use, as constructor calls.
+     *
+     * @param position the line and column of an offset in the template, in
+     *                 its own file or in the file of the component
+     */
+    template(
+        check: TemplateCheck,
+        generated: ts.SourceFile,
+        position: (offset: number) => { line: number; column: number }
+    ): void {
+        const result = this.classesByName.get(check.className);
+        const generatedFunction = generated.statements.find((statement): statement is ts.FunctionDeclaration =>
+            ts.isFunctionDeclaration(statement) && statement.name?.text === check.functionName);
+
+        if (!result || !generatedFunction?.body) {
+            return;
+        }
+
+        const body = generatedFunction.body;
+        const text = check.template.text;
+
+        const location = (start: number, end: number): Location => {
+            const from = position(start);
+            const to = position(Math.max(end - 1, start));
+
+            return { startLine: from.line, endLine: to.line, startColumn: from.column, endColumn: to.column };
+        };
+
+        this.pending.push(() => {
+            const uses: Method = { name: "template", qualifiedName: qualify(check.className, "template") };
+
+            this.body(uses, [body], generated);
+
+            const mappings = new Map(check.mappings.map(mapping => [`${mapping.generatedStart}:${mapping.generatedEnd}`, mapping]));
+
+            // What the template was generated from; scaffolding has no mapping
+            const mappingOf = (item: Partial<Location>) => {
+                if (item.startLine === undefined || item.startColumn === undefined
+                    || item.endLine === undefined || item.endColumn === undefined) {
+                    return undefined;
+                }
+
+                const start = generated.getPositionOfLineAndCharacter(item.startLine - 1, item.startColumn - 1);
+                const end = generated.getPositionOfLineAndCharacter(item.endLine - 1, item.endColumn - 1) + 1;
+
+                return mappings.get(`${start}:${end}`);
+            };
+
+            const calls: Call[] = [];
+
+            for (const call of uses.calls ?? []) {
+                const mapping = mappingOf(call);
+
+                if (!mapping) {
+                    continue;
+                }
+
+                const written = text.slice(mapping.start, mapping.end);
+
+                calls.push({
+                    ...call,
+                    target: call.resolved ? call.target : mapping.pipe ?? written.slice(0, Math.max(written.indexOf("("), 0) || written.length).trim(),
+                    arguments: mapping.arguments
+                        ? mapping.arguments.map(argument => ({ value: text.slice(argument.start, argument.end).trim() }))
+                        : call.arguments,
+                    ...location(mapping.start, mapping.end)
+                });
+            }
+
+            for (const element of check.elements) {
+                calls.push({
+                    target: qualify(element.className, "constructor"),
+                    kind: "CONSTRUCTOR",
+                    arguments: element.inputs.map(input => ({ name: input.name, value: text.slice(input.start, input.end).trim() })),
+                    ...location(element.start, element.end),
+                    resolved: true
+                });
+            }
+
+            const remapped = <T extends Partial<Location>>(items: T[] | undefined) => (items ?? [])
+                .flatMap(item => {
+                    const mapping = mappingOf(item);
+
+                    return mapping ? [{ ...item, ...location(mapping.start, mapping.end) }] : [];
+                });
+
+            const byPosition = (left: Partial<Location>, right: Partial<Location>) =>
+                (left.startLine ?? 0) - (right.startLine ?? 0) || (left.startColumn ?? 0) - (right.startColumn ?? 0);
+
+            const method: Method = {
+                name: "template",
+                qualifiedName: qualify(check.className, "template"),
+                kind: "METHOD"
+            };
+
+            if (!check.template.external) {
+                Object.assign(method, location(0, text.length));
+            }
+
+            const fieldAccesses = remapped(uses.fieldAccesses);
+            const typeUses = remapped(uses.typeUses);
+
+            if (calls.length > 0) {
+                method.calls = calls.sort(byPosition);
+            }
+
+            if (fieldAccesses.length > 0) {
+                method.fieldAccesses = fieldAccesses.sort(byPosition);
+            }
+
+            if (typeUses.length > 0) {
+                method.typeUses = typeUses.sort(byPosition);
+            }
+
+            if (method.calls || method.fieldAccesses || method.typeUses) {
+                result.methods = [...result.methods ?? [], method];
+            }
+        });
     }
 
     // Declarations
@@ -368,6 +496,8 @@ export class SourceParser {
             qualifiedName,
             ...this.location(declaration)
         };
+
+        this.classesByName.set(qualifiedName, result);
 
         if (nesting !== "TOP_LEVEL") {
             result.nesting = nesting;

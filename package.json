@@ -22,6 +22,7 @@
     "typescript": "^7.0.2"
   },
   "dependencies": {
+    "@angular/compiler": "^20.3.34",
     "semver": "^7.8.5",
     "typescript-api": "npm:typescript@^5.9.3",
     "yaml": "^2.9.1"

@@ -7,6 +7,7 @@ import { detectBuildSystem, detectModules, detectNodeVersion } from "./project.j
 import { language, moduleOf, sourceFiles, sourceSet, withoutExtension } from "./source-files.js";
 import { DependencyGraph } from "../npm/dependency-graph.js";
 import { addTransitiveDependencies } from "../npm/transitive-dependencies.js";
+import { angularTemplates, type TemplateCheck } from "./angular-templates.js";
 import { configOptions, ModuleResolver } from "./module-resolution.js";
 import { SourceParser } from "./source-parser.js";
 
@@ -51,7 +52,11 @@ export class TypeScriptScanner {
             .filter(module => module.name !== undefined && declaredName(join(targetPath, module.path)) === module.name)
             .map(module => [module.name!, join(targetPath, module.path)]));
 
-        const program = createProgram(targetPath, paths, this.packages, workspace);
+        // Angular templates, as generated code the program checks
+        const angular = angularTemplates(targetPath, paths);
+        const generated = new Map(angular.checks.map(check => [check.generatedFile, check.generatedText]));
+
+        const program = createProgram(targetPath, paths, this.packages, workspace, generated);
         const parser = new SourceParser(program);
 
         const modulesByPath = new Map(modules.map(module => [module.path, module]));
@@ -65,8 +70,28 @@ export class TypeScriptScanner {
             }
         }
 
+        for (const check of angular.checks) {
+            const generatedFile = program.getSourceFile(check.generatedFile);
+
+            if (generatedFile) {
+                parser.template(check, generatedFile, positionsIn(targetPath, check.template, program));
+            }
+        }
+
+        for (const path of angular.templateFiles) {
+            const file = this.templateFile(targetPath, path);
+
+            if (file) {
+                modulesByPath.get(moduleOf(path, modulePaths))!.files.push(file);
+            }
+        }
+
         // Once every file is parsed, so references resolve across files
         parser.resolve();
+
+        for (const module of modules) {
+            module.files.sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0);
+        }
 
         for (const module of modules) {
             log(`Module ${module.path}: ${describe(module)}`);
@@ -82,6 +107,29 @@ export class TypeScriptScanner {
                 ...detectBuildSystem(targetPath)
             },
             modules
+        };
+    }
+
+    /**
+     * A template of Angular components, listed as a file of its own; what
+     * it uses is the components', see {@link SourceParser.template}.
+     */
+    private templateFile(targetPath: string, path: string): File | undefined {
+        let content: Buffer;
+
+        try {
+            content = readFileSync(join(targetPath, path));
+        } catch {
+            return undefined;
+        }
+
+        return {
+            path,
+            language: "HTML",
+            sourceSet: sourceSet(path),
+            size: content.length,
+            checksum: createHash("sha256").update(content).digest("hex"),
+            lineCount: lineCount(content.toString("utf8"))
         };
     }
 
@@ -143,7 +191,8 @@ function createProgram(
     targetPath: string,
     paths: string[],
     packages: Packages,
-    workspace: Map<string, string>
+    workspace: Map<string, string>,
+    generated: Map<string, string>
 ): ts.Program {
     let options: ts.CompilerOptions = {
         module: ts.ModuleKind.ESNext,
@@ -182,9 +231,9 @@ function createProgram(
     };
 
     return ts.createProgram({
-        rootNames: paths.map(path => join(targetPath, path)),
+        rootNames: [...paths.map(path => join(targetPath, path)), ...generated.keys()],
         options,
-        host: compilerHost(targetPath, options, forced, packages, workspace)
+        host: compilerHost(targetPath, options, forced, packages, workspace, generated)
     });
 }
 
@@ -196,9 +245,26 @@ function compilerHost(
     options: ts.CompilerOptions,
     forced: ts.CompilerOptions,
     packages: Packages,
-    workspace: Map<string, string>
+    workspace: Map<string, string>,
+    generated: Map<string, string>
 ): ts.CompilerHost {
     const host = ts.createCompilerHost(options);
+
+    // The generated files, which are not on disk
+    const getSourceFile = host.getSourceFile.bind(host);
+    const fileExists = host.fileExists.bind(host);
+    const readFile = host.readFile.bind(host);
+
+    host.getSourceFile = (fileName, languageVersion, ...rest) => {
+        const text = generated.get(fileName);
+
+        return text === undefined
+            ? getSourceFile(fileName, languageVersion, ...rest)
+            : ts.createSourceFile(fileName, text, languageVersion, true);
+    };
+    host.fileExists = fileName => generated.has(fileName) || fileExists(fileName);
+    host.readFile = fileName => generated.get(fileName) ?? readFile(fileName);
+
     const resolver = new ModuleResolver(targetPath, options, forced, workspace, packages.nodeModules, host);
 
     host.resolveModuleNameLiterals = (literals, containingFile, redirected, compilerOptions, sourceFile) =>
@@ -233,6 +299,39 @@ function declaredName(directory: string): string | undefined {
     } catch {
         return undefined;
     }
+}
+
+/**
+ * The line and column of an offset in a template: in its own file, or for
+ * an inline template in the file of the component.
+ */
+function positionsIn(
+    targetPath: string,
+    template: TemplateCheck["template"],
+    program: ts.Program
+): (offset: number) => { line: number; column: number } {
+    const text = template.external
+        ? template.text
+        : program.getSourceFile(join(targetPath, template.path))?.text ?? "";
+
+    const lineStarts = [0];
+
+    for (let index = 0; index < text.length; index++) {
+        if (text[index] === "\n") {
+            lineStarts.push(index + 1);
+        }
+    }
+
+    return offset => {
+        const position = offset + template.offset;
+        let line = 0;
+
+        while (line + 1 < lineStarts.length && lineStarts[line + 1] <= position) {
+            line++;
+        }
+
+        return { line: line + 1, column: position - lineStarts[line] + 1 };
+    };
 }
 
 /**

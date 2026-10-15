@@ -1,0 +1,14 @@
+<h1>{{ orders.length }} orders</h1>
+<input [(ngModel)]="query" (keyup.enter)="refresh()">
+@for (order of orders; track order.id) {
+  <app-order-card [order]="order" label="Order" (opened)="select($event)" appHighlight></app-order-card>
+  <span>{{ order.total | money:'EUR' }} {{ order.id | uppercase }}</span>
+} @empty {
+  <p>No orders</p>
+}
+<ul>
+  <li *ngFor="let order of orders; index as i" (click)="select(order)">{{ i }}</li>
+</ul>
+@if (selected; as current) {
+  <p>{{ service.find(current.id)?.total }}</p>
+}

@@ -1,0 +1,6 @@
+{
+  "name": "angular-shop",
+  "dependencies": {
+    "@angular/core": "^20.0.0"
+  }
+}
