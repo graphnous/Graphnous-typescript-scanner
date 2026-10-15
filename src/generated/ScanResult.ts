@@ -191,6 +191,9 @@ export interface Class {
    * The components of a record, in declaration order.
    */
   recordComponents?: RecordComponent[];
+  /**
+   * Its methods and constructors. What initializers use belongs to the methods that run them: the instance initializers, field initializers and initializer blocks, to each constructor that runs them, and a class without a declared constructor lists the one the compiler adds when they use anything; the static initializers, static field initializers and static blocks, to a method named "static" with the STATIC modifier, e.g. "com.example.Orders.static()" or "src/orders:Orders.static", listed when they use anything.
+   */
   methods?: Method[];
   /**
    * Its fields, or for TypeScript its properties. A Go embedded field is a field named after its type.
@@ -344,7 +347,7 @@ export interface Method {
   };
   annotations?: Annotation[];
   /**
-   * The methods and constructors called from the body, one entry per call site. Calls inside lambdas and anonymous classes declared in the body belong to this method.
+   * The methods and constructors called from the body, one entry per call site. Calls inside lambdas and anonymous classes declared in the body belong to this method. A constructor also has those of the instance initializers it runs; see Class.methods.
    */
   calls?: Call[];
   /**

@@ -64,6 +64,12 @@ such as `@shop/ui`, resolve to their sources, also when their
 `package.json` points at a build that is not there, such as
 `dist/index.js` for `src/index.ts`.
 
+What initializers use belongs to what runs them: property initializers to
+the constructor, also the one a class without a declared constructor gets,
+e.g. `src/cache:Cache.constructor` for `entries = new Map()`, and static
+property initializers and `static { }` blocks to a method `static` of the
+class, e.g. `src/registry:Registry.static`.
+
 A call through a value of a callable type, such as `client(url)` with
 `client: Client` where `type Client = { (url: string): Response }`, or
 `hook(request)` with `type Hook = (request: Request) => void`, resolves to
