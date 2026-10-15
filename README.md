@@ -64,6 +64,11 @@ such as `@shop/ui`, resolve to their sources, also when their
 `package.json` points at a build that is not there, such as
 `dist/index.js` for `src/index.ts`.
 
+A call through a value of a callable type, such as `client(url)` with
+`client: Client` where `type Client = { (url: string): Response }`, or
+`hook(request)` with `type Hook = (request: Request) => void`, resolves to
+the call of the type, listed as its method `call`: `src/client:Client.call`.
+
 Calls into the JavaScript built-ins and the DOM resolve to their global
 names, e.g. `Array.isArray`, `Promise.race` or `console.log`. Calls into
 packages resolve when the scanner has their types, see below, to the module

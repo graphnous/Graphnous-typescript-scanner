@@ -16,3 +16,22 @@ export function use(client: RetryingClient): string {
 
     return client("/") + client.get("/orders");
 }
+
+export type Hook = (request: string) => void;
+
+export type ClientOptions = {
+    retry?: (attempt: number) => number;
+};
+
+export function hooks(hook: Hook, client: Client, options: Required<ClientOptions>): void {
+    const local: Client = client;
+
+    hook("/orders");
+    local("/");
+    options.retry(1);
+    notify("/");
+}
+
+export const notify: Hook = request => {
+    console.log(request);
+};

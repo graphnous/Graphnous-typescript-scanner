@@ -28,7 +28,7 @@ export interface LibraryDeclarations {
  * construct signature "constructor" after it.
  */
 export function libraryDeclarations(sourceFiles: readonly ts.SourceFile[]): LibraryDeclarations {
-    return walk(sourceFiles.map(sourceFile => [sourceFile, ""]));
+    return walk(sourceFiles.map(sourceFile => [sourceFile, ""]), BUILT_IN_CALL);
 }
 
 /**
@@ -38,7 +38,8 @@ export function libraryDeclarations(sourceFiles: readonly ts.SourceFile[]): Libr
  * "react-dom/client:createRoot", with the members of classes and
  * interfaces after them, e.g. "express:Request.get". What a module exports
  * with export = is "default". An @types package is named after the
- * package it is for, so @types/express is "express".
+ * package it is for, so @types/express is "express". What calling a value
+ * of a callable type calls is "call" after the type, e.g. "ava:TestFn.call".
  *
  * A declaration no import reaches is named after its file in the package,
  * e.g. "express-serve-static-core/types:Helper", where an index file is
@@ -63,7 +64,7 @@ export function packageDeclarations(
         }
     }
 
-    const result = walk(files);
+    const result = walk(files, PACKAGE_CALL);
     const exported = exportedNames(program, result);
 
     for (const declarations of [result.methods, result.fields, result.classes]) {
@@ -123,7 +124,18 @@ function moduleName(specifier: string): string {
     return specifier.replace(/^node:/, "");
 }
 
-function walk(files: readonly [ts.SourceFile, string][]): LibraryDeclarations {
+/**
+ * How a call signature is named after what declares it: a built-in after
+ * the global itself, as Number for Number(value), and a package's "call"
+ * after its type, as the target's are, such as "ava:TestFn.call".
+ */
+type CallName = (prefix: string) => string;
+
+const BUILT_IN_CALL: CallName = prefix => prefix;
+
+const PACKAGE_CALL: CallName = prefix => `${prefix}.call`;
+
+function walk(files: readonly [ts.SourceFile, string][], call: CallName): LibraryDeclarations {
     const result: LibraryDeclarations = { methods: new Map(), fields: new Map(), classes: new Map() };
     const globals = new Globals();
 
@@ -132,7 +144,7 @@ function walk(files: readonly [ts.SourceFile, string][]): LibraryDeclarations {
     }
 
     for (const [sourceFile, prefix] of files) {
-        statements(sourceFile.statements, prefix, globals, result);
+        statements(sourceFile.statements, prefix, globals, result, call);
     }
 
     return result;
@@ -230,22 +242,30 @@ function statements(
     nodes: ts.NodeArray<ts.Statement>,
     prefix: string,
     globals: Globals,
-    result: LibraryDeclarations
+    result: LibraryDeclarations,
+    call: CallName
 ): void {
     for (const statement of nodes) {
         if (ts.isInterfaceDeclaration(statement) || ts.isClassDeclaration(statement)) {
             const name = prefix + (statement.name?.text ?? "default");
 
             result.classes.set(statement, name);
-            members(statement.members, ts.isInterfaceDeclaration(statement) ? globals.membersOf(name) : name, result);
+            members(statement.members, ts.isInterfaceDeclaration(statement) ? globals.membersOf(name) : name, result, call);
         } else if (ts.isTypeAliasDeclaration(statement)) {
             const name = prefix + statement.name.text;
 
             result.classes.set(statement, name);
 
-            // type TestFn = { (title: string): void; skip(...): void }
-            if (ts.isTypeLiteralNode(statement.type)) {
-                members(statement.type.members, globals.membersOf(name), result);
+            // type TestFn = { (title: string): void; skip(...): void }, also
+            // in an intersection, and type Hook = (request: Request) => void
+            const type = ts.isParenthesizedTypeNode(statement.type) ? statement.type.type : statement.type;
+
+            for (const literal of objectTypesOf(type)) {
+                members(literal.members, globals.membersOf(name), result, call);
+            }
+
+            if (ts.isFunctionTypeNode(type)) {
+                result.methods.set(type, call(name));
             }
         } else if (ts.isEnumDeclaration(statement)) {
             const name = prefix + statement.name.text;
@@ -273,12 +293,12 @@ function statements(
                 (globals.isClass(name, type) ? result.classes : result.fields).set(declaration, name);
 
                 if (type && ts.isTypeLiteralNode(type)) {
-                    members(type.members, name, result);
+                    members(type.members, name, result, call);
                 }
             }
         } else if (ts.isModuleDeclaration(statement)) {
             for (const [body, bodyPrefix] of moduleBodies(statement, prefix)) {
-                statements(body.statements, bodyPrefix, globals, result);
+                statements(body.statements, bodyPrefix, globals, result, call);
             }
         }
     }
@@ -287,13 +307,14 @@ function statements(
 function members(
     nodes: ts.NodeArray<ts.TypeElement | ts.ClassElement>,
     prefix: string,
-    result: LibraryDeclarations
+    result: LibraryDeclarations,
+    call: CallName
 ): void {
     for (const member of nodes) {
         const name = member.name && memberName(member.name);
 
         if (ts.isCallSignatureDeclaration(member)) {
-            result.methods.set(member, prefix);
+            result.methods.set(member, call(prefix));
         } else if (ts.isConstructSignatureDeclaration(member) || ts.isConstructorDeclaration(member)) {
             result.methods.set(member, `${prefix}.constructor`);
         } else if (name === undefined) {
@@ -452,7 +473,7 @@ function exportedNames(program: ts.Program, known: LibraryDeclarations): Map<ts.
 
         for (const signature of type.getCallSignatures()) {
             if (signature.declaration) {
-                name(signature.declaration, base);
+                name(signature.declaration, PACKAGE_CALL(base));
             }
         }
 
@@ -472,7 +493,7 @@ function memberDeclarations(
     base: string,
     name: (node: ts.Node, value: string) => void
 ): void {
-    const memberBase = key === ts.InternalSymbolName.Call ? base
+    const memberBase = key === ts.InternalSymbolName.Call ? PACKAGE_CALL(base)
         : key === ts.InternalSymbolName.Constructor || key === ts.InternalSymbolName.New ? `${base}.constructor`
         : key === ts.InternalSymbolName.Index ? undefined
         : `${base}.${member.name}`;
@@ -509,6 +530,20 @@ function moduleSpecifiers(sourceFile: ts.SourceFile): ts.StringLiteral[] {
     visit(sourceFile.statements);
 
     return specifiers;
+}
+
+/**
+ * The object types of a type alias, as in type A = { ... } and
+ * type A = B & { ... }.
+ */
+function objectTypesOf(type: ts.TypeNode): ts.TypeLiteralNode[] {
+    const unwrapped = ts.isParenthesizedTypeNode(type) ? type.type : type;
+
+    if (ts.isTypeLiteralNode(unwrapped)) {
+        return [unwrapped];
+    }
+
+    return ts.isIntersectionTypeNode(unwrapped) ? unwrapped.types.flatMap(objectTypesOf) : [];
 }
 
 function safely<T>(action: () => T): T | undefined {

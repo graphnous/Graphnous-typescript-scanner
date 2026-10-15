@@ -321,7 +321,12 @@ test("lists the members of type aliases of object types, and resolves calls thro
         return [...(alias.methods ?? []), ...(alias.fields ?? [])].map(member => member.qualifiedName);
     };
 
-    assert.deepEqual(members("src/client:Client"), ["src/client:Client.post", "src/client:Client.get", "src/client:Client.baseUrl"]);
+    assert.deepEqual(members("src/client:Client"), [
+        "src/client:Client.call",
+        "src/client:Client.post",
+        "src/client:Client.get",
+        "src/client:Client.baseUrl"
+    ]);
     assert.deepEqual(members("src/client:RetryingClient"), ["src/client:RetryingClient.retry"]);
     assert.deepEqual(members("src/client:Result"), []);
 
@@ -330,10 +335,25 @@ test("lists the members of type aliases of object types, and resolves calls thro
     assert.deepEqual(targets(use, "calls"), [
         "METHOD src/client:Client.post",
         "METHOD src/client:RetryingClient.retry",
-        "METHOD client",
+        "METHOD src/client:Client.call",
         "METHOD src/client:Client.get"
     ]);
     assert.deepEqual(targets(use, "fieldAccesses"), ["READ src/client:Client.baseUrl"]);
+});
+
+test("resolves calls through values of callable types to their call", () => {
+    const client = file("src/client.ts");
+
+    assert.deepEqual(find(client.classes, "src/client:Hook").methods?.map(method => [method.qualifiedName, method.parameters?.map(parameter => parameter.name)]), [
+        ["src/client:Hook.call", ["request"]]
+    ]);
+
+    assert.deepEqual(targets(find(client.functions, "src/client:hooks"), "calls"), [
+        "METHOD src/client:Hook.call",
+        "METHOD src/client:Client.call",
+        "METHOD src/client:ClientOptions.retry",
+        "METHOD src/client:notify"
+    ]);
 });
 
 test("lists rendered components as calls", () => {
