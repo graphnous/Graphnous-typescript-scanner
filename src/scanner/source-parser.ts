@@ -392,9 +392,14 @@ export class SourceParser {
             // The members of an object type, as an interface's, such as
             // get of type Client = { get: (url: string) => Response }
             const literals = objectTypesOf(declaration.type);
+            const functionType = ts.isParenthesizedTypeNode(declaration.type) ? declaration.type.type : declaration.type;
 
             if (literals.length > 0) {
                 this.members(result, ts.factory.createNodeArray(literals.flatMap(literal => [...literal.members])), memberScope);
+            } else if (ts.isFunctionTypeNode(functionType)) {
+                // What calling a value of type Hook = (request: Request) => void
+                // calls, as "call"
+                result.methods = [this.method("call", qualify(qualifiedName, "call"), "METHOD", functionType, functionType, [], memberScope, [])];
             }
         } else if (ts.isInterfaceDeclaration(declaration)) {
             result.kind = "INTERFACE";
@@ -447,11 +452,18 @@ export class SourceParser {
         const fields: Field[] = [];
         const seen = new Set<ts.Symbol>();
         const properties = new Map<string, Field>();
+        const callSignatures = members.filter(ts.isCallSignatureDeclaration);
 
         for (const member of members) {
             const name = member.name && memberName(member.name);
 
-            if (ts.isConstructorDeclaration(member)) {
+            if (ts.isCallSignatureDeclaration(member)) {
+                // What calling a value of the type calls, as "call", with
+                // its overloads
+                if (member === callSignatures[0]) {
+                    methods.push(this.method("call", qualify(scope.prefix, "call"), "METHOD", member, member, [], scope, callSignatures));
+                }
+            } else if (ts.isConstructorDeclaration(member)) {
                 if (!this.isFirstOf(member, seen)) {
                     continue;
                 }
@@ -925,9 +937,12 @@ export class SourceParser {
             // express or test of ava, after the property or variable
             const holder = this.declarationOf(node.expression);
 
-            if (holder && this.fields.has(holder)) {
+            if (holder && (this.fields.has(holder) || this.methods.has(holder))) {
+                // Also a function of the target typed with a callable type,
+                // such as const find: Finder = () => ...
                 target = this.names.get(holder);
             } else if (declaration && this.methods.has(declaration)) {
+                // The call of the type of a value, such as Hook.call
                 target = this.names.get(declaration);
             }
         }
@@ -1160,12 +1175,31 @@ export class SourceParser {
     }
 
     private registeredDeclarationOf(symbol: ts.Symbol): ts.Node | undefined {
-        const declarations = [
-            ...symbol.valueDeclaration ? [symbol.valueDeclaration] : [],
-            ...symbol.declarations ?? []
+        const declarationsOf = (of: ts.Symbol) => [
+            ...of.valueDeclaration ? [of.valueDeclaration] : [],
+            ...of.declarations ?? []
         ];
 
-        return declarations.find(declaration => this.names.has(declaration));
+        const declaration = declarationsOf(symbol).find(candidate => this.names.has(candidate));
+
+        if (declaration || !(symbol.flags & ts.SymbolFlags.Transient)) {
+            return declaration;
+        }
+
+        // A property of a mapped or combined type, such as Required<Options>
+        // or A & B, by the properties it is made of
+        let roots: readonly ts.Symbol[] = [];
+
+        try {
+            roots = this.checker.getRootSymbols(symbol);
+        } catch {
+            // Has none
+        }
+
+        return roots
+            .filter(root => root !== symbol)
+            .flatMap(declarationsOf)
+            .find(candidate => this.names.has(candidate));
     }
 
     // Helpers

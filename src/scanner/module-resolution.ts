@@ -162,8 +162,8 @@ export class ModuleResolver {
         const candidates = [
             ...exportTargets(packageJson.exports, subpath === "" ? "." : `./${subpath}`),
             ...subpath === ""
-                ? [packageJson.types, packageJson.typings, packageJson.module, packageJson.main, "src/index", "index"]
-                : [`src/${subpath}`, subpath]
+                ? [packageJson.types, packageJson.typings, packageJson.module, packageJson.main, ...SOURCE_DIRECTORIES.map(source => `${source}/index`), "index"]
+                : [...SOURCE_DIRECTORIES.map(source => `${source}/${subpath}`), subpath]
         ].filter((candidate): candidate is string => typeof candidate === "string");
 
         for (const candidate of candidates) {
@@ -186,21 +186,24 @@ interface Config {
     types: ts.TypeReferenceDirectiveResolutionCache;
 }
 
-/** Directories builds are written to, whose sources are in src. */
-const BUILD_DIRECTORIES = /^(\.\/)?(dist|build|lib|out|esm|cjs|types)\//;
+/** Directories builds are written to, whose sources are in src or source. */
+const BUILD_DIRECTORIES = /^(\.\/)?(dist|distribution|build|lib|out|esm|cjs|types)\//;
+
+/** Directories packages keep their sources in. */
+const SOURCE_DIRECTORIES = ["src", "source"];
 
 const SOURCE_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".d.ts", ".js", ".jsx", ".mjs", ".cjs"];
 
 /**
  * The paths a target of a package.json may be built from: the source in
  * src of a path in a build directory first, then the path itself, without
- * the extension of the build.
+ * the extension of the build; in source for packages that keep them there.
  */
 function sources(target: string): string[] {
     const path = target.replace(/\.d\.[cm]?ts$|\.[cm]?[jt]sx?$/, "");
 
     return BUILD_DIRECTORIES.test(path)
-        ? [path.replace(BUILD_DIRECTORIES, "src/"), path]
+        ? [...SOURCE_DIRECTORIES.map(source => path.replace(BUILD_DIRECTORIES, `${source}/`)), path]
         : [path];
 }
 

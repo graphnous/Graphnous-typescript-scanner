@@ -1,0 +1,5 @@
+{
+  "name": "@mono/legacy",
+  "type": "module",
+  "exports": "./distribution/index.js"
+}

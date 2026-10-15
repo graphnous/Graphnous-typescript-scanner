@@ -38,8 +38,12 @@ test("names the creation of a class after its constructor, also when it inherits
     assert.ok(calls("packages/web/src/app:app").includes("packages/web/src/app:CachedStore.constructor true"));
 });
 
+test("resolves imports of a package of the workspace to sources it keeps in source", () => {
+    assert.ok(calls("packages/web/src/app:app").includes("packages/legacy/source/index:old true"));
+});
+
 test("resolves the path aliases of the tsconfig.json nearest to each file", () => {
-    assert.deepEqual(calls("packages/web/src/app:app").filter(call => /components|lib/.test(call)), [
+    assert.deepEqual(calls("packages/web/src/app:app").filter(call => /components|web\/src\/lib/.test(call)), [
         "packages/web/src/components/button:button true",
         "packages/web/src/lib/index:lib true"
     ]);
