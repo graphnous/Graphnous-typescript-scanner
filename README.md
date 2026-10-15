@@ -1,7 +1,7 @@
 # GraphNous TypeScript Scanner
 
-Scans the TypeScript and JavaScript sources of a project, and the templates
-of its Angular components, and writes a
+Scans the TypeScript and JavaScript sources of a project, the templates of
+its Angular components and its Vue single-file components, and writes a
 [GraphNous scan result](https://graphnous.github.io/graphnous-schemas/schema/scan/scan-result.schema.json):
 its packages as modules, its files, classes, functions and variables, and
 for each function and method, and the top-level code of each file, the
@@ -91,6 +91,26 @@ the component, e.g. `src/app/orders.component:OrdersComponent.template`.
 
 What a template in a file of its own uses is at its places in that file,
 which is listed as a file with language `HTML`.
+
+### Vue components
+
+A Vue single-file component (`.vue`) is listed as a file with language
+`VUE`, with the declarations of its scripts, and the component itself as
+its function `default`, e.g. `src/components/OrderList:default`, which
+holds what its template uses, at its places in the `.vue` file:
+
+- `@click="select(order)"` calls `select`, and `@click="refresh"` refers to
+  `refresh`; `{{ formatTotal(order) }}` calls the imported function;
+- the items of `v-for` are typed, and the props of `defineProps<T>()` are
+  of type `T`; `v-model="query"` reads and writes `query`;
+- an element that is a component the script imports, as `<OrderCard>` or
+  `<order-card>`, is a call of its `default`, with its props as named
+  arguments.
+
+Imports of `.vue` files, also through the path aliases of the
+`tsconfig.json`, resolve to their scripts. Components of `<script setup>`
+are resolved; the templates of the Options API (`data`, `methods`) are not
+yet.
 
 A call through a value of a callable type, such as `client(url)` with
 `client: Client` where `type Client = { (url: string): Response }`, or

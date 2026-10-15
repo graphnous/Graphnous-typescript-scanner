@@ -89,6 +89,8 @@ export interface Mapping {
     arguments?: { start: number; end: number }[];
     /** For a pipe the target does not declare: its name, e.g. "date". */
     pipe?: string;
+    /** For a component used by an element: the names of its arguments. */
+    argumentNames?: string[];
 }
 
 /**

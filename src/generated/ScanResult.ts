@@ -79,7 +79,7 @@ export interface File {
    */
   classes?: Class[];
   /**
-   * The functions declared at the top level of the file, outside any class, with kind FUNCTION. In TypeScript and JavaScript this includes arrow functions and function expressions assigned to a top-level const, let or var, named after the variable, e.g. "src/orders:find" for "export const find = () => ..."; they are not listed again in variables. Go methods with a receiver and Rust methods in impl blocks are listed under the class of their receiver or self type instead.
+   * The functions declared at the top level of the file, outside any class, with kind FUNCTION. In TypeScript and JavaScript this includes arrow functions and function expressions assigned to a top-level const, let or var, named after the variable, e.g. "src/orders:find" for "export const find = () => ..."; they are not listed again in variables. A Vue single-file component, a file with language VUE whose scripts are listed as its declarations, is its function "default", e.g. "src/components/OrderList:default": what its template uses belongs to it, at its places in the .vue file, and a template that uses it, as <OrderList :orders="orders" />, calls it with its props as named arguments. Go methods with a receiver and Rust methods in impl blocks are listed under the class of their receiver or self type instead.
    */
   functions?: Method[];
   /**

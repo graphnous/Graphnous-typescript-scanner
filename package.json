@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@angular/compiler": "^20.3.34",
+    "@vue/compiler-dom": "^3.5.44",
     "semver": "^7.8.5",
     "typescript-api": "npm:typescript@^5.9.3",
     "yaml": "^2.9.1"
