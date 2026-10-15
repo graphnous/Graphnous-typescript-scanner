@@ -21,6 +21,9 @@ const TYPESCRIPT_EXTENSIONS = [".d.ts", ".d.mts", ".d.cts", ".ts", ".tsx", ".mts
 
 const JAVASCRIPT_EXTENSIONS = [".js", ".jsx", ".mjs", ".cjs"];
 
+/** Vue single-file components, whose scripts are TypeScript or JavaScript. */
+const VUE_EXTENSIONS = [".vue"];
+
 /**
  * Directories whose files are test code, wherever they are.
  */
@@ -29,8 +32,8 @@ const TEST_DIRECTORIES = new Set(["test", "tests", "__tests__", "__mocks__", "sp
 const TEST_FILE = /\.(test|spec)\.[cm]?[jt]sx?$/;
 
 /**
- * The TypeScript and JavaScript files below the target, as paths relative
- * to it with forward slashes, sorted.
+ * The TypeScript, JavaScript and Vue files below the target, as paths
+ * relative to it with forward slashes, sorted.
  */
 export function sourceFiles(targetPath: string): string[] {
     return walk(targetPath)
@@ -50,16 +53,20 @@ export function packageDirectories(targetPath: string): string[] {
 }
 
 /**
- * The language of the file from its extension: TYPESCRIPT or JAVASCRIPT,
- * or undefined for other files.
+ * The language of the file from its extension: TYPESCRIPT, JAVASCRIPT or
+ * VUE, or undefined for other files.
  */
-export function language(path: string): "TYPESCRIPT" | "JAVASCRIPT" | undefined {
+export function language(path: string): "TYPESCRIPT" | "JAVASCRIPT" | "VUE" | undefined {
     if (TYPESCRIPT_EXTENSIONS.some(extension => path.endsWith(extension))) {
         return "TYPESCRIPT";
     }
 
     if (JAVASCRIPT_EXTENSIONS.some(extension => path.endsWith(extension))) {
         return "JAVASCRIPT";
+    }
+
+    if (VUE_EXTENSIONS.some(extension => path.endsWith(extension))) {
+        return "VUE";
     }
 
     return undefined;
@@ -70,7 +77,7 @@ export function language(path: string): "TYPESCRIPT" | "JAVASCRIPT" | undefined 
  * "src/orders" for "src/orders.ts".
  */
 export function withoutExtension(path: string): string {
-    const extension = [...TYPESCRIPT_EXTENSIONS, ...JAVASCRIPT_EXTENSIONS]
+    const extension = [...TYPESCRIPT_EXTENSIONS, ...JAVASCRIPT_EXTENSIONS, ...VUE_EXTENSIONS]
         .find(candidate => path.endsWith(candidate));
 
     return extension ? path.slice(0, -extension.length) : path;

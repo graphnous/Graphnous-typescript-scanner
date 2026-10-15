@@ -8,6 +8,7 @@ import { language, moduleOf, sourceFiles, sourceSet, withoutExtension } from "./
 import { DependencyGraph } from "../npm/dependency-graph.js";
 import { addTransitiveDependencies } from "../npm/transitive-dependencies.js";
 import { angularTemplates, type TemplateCheck } from "./angular-templates.js";
+import { type VueComponent, vueComponents } from "./vue-components.js";
 import { configOptions, ModuleResolver } from "./module-resolution.js";
 import { SourceParser } from "./source-parser.js";
 
@@ -54,7 +55,11 @@ export class TypeScriptScanner {
 
         // Angular templates, as generated code the program checks
         const angular = angularTemplates(targetPath, paths);
-        const generated = new Map(angular.checks.map(check => [check.generatedFile, check.generatedText]));
+        const vue = new Map(vueComponents(targetPath, paths).map(component => [component.path, component]));
+        const generated = new Map([
+            ...angular.checks.map(check => [check.generatedFile, check.generatedText] as const),
+            ...[...vue.values()].map(component => [component.generatedFile, component.generatedText] as const)
+        ]);
 
         const program = createProgram(targetPath, paths, this.packages, workspace, generated);
         const parser = new SourceParser(program);
@@ -63,7 +68,7 @@ export class TypeScriptScanner {
         const modulePaths = [...modulesByPath.keys()];
 
         for (const path of paths) {
-            const file = this.file(targetPath, path, program, parser);
+            const file = this.file(targetPath, path, program, parser, vue.get(path));
 
             if (file) {
                 modulesByPath.get(moduleOf(path, modulePaths))!.files.push(file);
@@ -141,9 +146,10 @@ export class TypeScriptScanner {
         targetPath: string,
         path: string,
         program: ts.Program,
-        parser: SourceParser
+        parser: SourceParser,
+        vue: VueComponent | undefined
     ): File | undefined {
-        const sourceFile = program.getSourceFile(join(targetPath, path));
+        const sourceFile = program.getSourceFile(vue ? vue.generatedFile : join(targetPath, path));
 
         let content: Buffer;
 
@@ -171,7 +177,20 @@ export class TypeScriptScanner {
         }
 
         try {
-            parser.parse(sourceFile, withoutExtension(path), file);
+            parser.parse(sourceFile, withoutExtension(path), file, vue?.generatedFrom);
+
+            if (vue) {
+                // The component, with what its template uses
+                const component = parser.vueComponent(sourceFile, withoutExtension(path), file, vue.component, vue.template);
+
+                if (vue.check) {
+                    parser.template(vue.check, sourceFile, offset => {
+                        const position = sourceFile.getLineAndCharacterOfPosition(offset);
+
+                        return { line: position.line + 1, column: position.character + 1 };
+                    }, component);
+                }
+            }
         } catch (error) {
             // A file the parser cannot handle is listed without declarations
             warn(`Skipping the declarations of ${path}: could not analyse it (${error instanceof Error ? error.message : error})`);
@@ -231,7 +250,8 @@ function createProgram(
     };
 
     return ts.createProgram({
-        rootNames: [...paths.map(path => join(targetPath, path)), ...generated.keys()],
+        // A .vue file is in the program as the TypeScript generated for it
+        rootNames: [...paths.filter(path => !path.endsWith(".vue")).map(path => join(targetPath, path)), ...generated.keys()],
         options,
         host: compilerHost(targetPath, options, forced, packages, workspace, generated)
     });

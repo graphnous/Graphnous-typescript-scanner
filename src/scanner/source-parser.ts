@@ -139,7 +139,7 @@ export class SourceParser {
      * @param path the path of the file relative to the target, without its
      *             extension, as qualified names start with
      */
-    parse(sourceFile: ts.SourceFile, path: string, file: File): void {
+    parse(sourceFile: ts.SourceFile, path: string, file: File, generatedFrom = Infinity): void {
         this.sourceFile = sourceFile;
 
         const imports: Import[] = [];
@@ -148,8 +148,13 @@ export class SourceParser {
         const variables: Field[] = [];
         const code: ts.Node[] = [];
 
+        // Not the code generated after a .vue file
+        const statements = generatedFrom === Infinity
+            ? sourceFile.statements
+            : ts.factory.createNodeArray(sourceFile.statements.filter(statement => statement.getStart(sourceFile) < generatedFrom));
+
         this.statements(
-            sourceFile.statements,
+            statements,
             { prefix: `${path}:`, classes },
             { imports, functions, variables, code }
         );
@@ -197,13 +202,14 @@ export class SourceParser {
     template(
         check: TemplateCheck,
         generated: ts.SourceFile,
-        position: (offset: number) => { line: number; column: number }
+        position: (offset: number) => { line: number; column: number },
+        owner?: Method
     ): void {
         const result = this.classesByName.get(check.className);
         const generatedFunction = generated.statements.find((statement): statement is ts.FunctionDeclaration =>
             ts.isFunctionDeclaration(statement) && statement.name?.text === check.functionName);
 
-        if (!result || !generatedFunction?.body) {
+        if ((!result && !owner) || !generatedFunction?.body) {
             return;
         }
 
@@ -252,7 +258,10 @@ export class SourceParser {
                     ...call,
                     target: call.resolved ? call.target : mapping.pipe ?? written.slice(0, Math.max(written.indexOf("("), 0) || written.length).trim(),
                     arguments: mapping.arguments
-                        ? mapping.arguments.map(argument => ({ value: text.slice(argument.start, argument.end).trim() }))
+                        ? mapping.arguments.map((argument, index) => ({
+                            ...mapping.argumentNames?.[index] !== undefined ? { name: mapping.argumentNames[index] } : {},
+                            value: text.slice(argument.start, argument.end).trim()
+                        }))
                         : call.arguments,
                     ...location(mapping.start, mapping.end)
                 });
@@ -278,13 +287,13 @@ export class SourceParser {
             const byPosition = (left: Partial<Location>, right: Partial<Location>) =>
                 (left.startLine ?? 0) - (right.startLine ?? 0) || (left.startColumn ?? 0) - (right.startColumn ?? 0);
 
-            const method: Method = {
+            const method: Method = owner ?? {
                 name: "template",
                 qualifiedName: qualify(check.className, "template"),
                 kind: "METHOD"
             };
 
-            if (!check.template.external) {
+            if (!owner && !check.template.external) {
                 Object.assign(method, location(0, text.length));
             }
 
@@ -303,10 +312,60 @@ export class SourceParser {
                 method.typeUses = typeUses.sort(byPosition);
             }
 
-            if (method.calls || method.fieldAccesses || method.typeUses) {
+            if (!owner && result && (method.calls || method.fieldAccesses || method.typeUses)) {
                 result.methods = [...result.methods ?? [], method];
             }
         });
+    }
+
+    /**
+     * A Vue single-file component as the function "default" of its file,
+     * e.g. "src/components/OrderList:default": what its template uses, see
+     * {@link template}, and what calls of it from other templates name. It
+     * is the default export of its script, or for <script setup> the one
+     * generated after it.
+     */
+    vueComponent(
+        sourceFile: ts.SourceFile,
+        path: string,
+        file: File,
+        generatedComponent: string | undefined,
+        location: { start: number; end: number } | undefined
+    ): Method {
+        const method: Method = {
+            name: "default",
+            qualifiedName: `${path}:default`,
+            kind: "FUNCTION"
+        };
+
+        if (location) {
+            const start = sourceFile.getLineAndCharacterOfPosition(location.start);
+            const end = sourceFile.getLineAndCharacterOfPosition(Math.max(location.end - 1, location.start));
+
+            Object.assign(method, {
+                startLine: start.line + 1,
+                endLine: end.line + 1,
+                startColumn: start.character + 1,
+                endColumn: end.character + 1
+            });
+        }
+
+        const declarations: ts.Node[] = [];
+
+        for (const statement of sourceFile.statements) {
+            if (ts.isExportAssignment(statement) && !statement.isExportEquals) {
+                declarations.push(statement);
+            } else if (generatedComponent && ts.isVariableStatement(statement)) {
+                declarations.push(...statement.declarationList.declarations
+                    .filter(declaration => ts.isIdentifier(declaration.name) && declaration.name.text === generatedComponent));
+            }
+        }
+
+        this.register(method.qualifiedName, this.methods, ...declarations);
+
+        file.functions = [method, ...(file.functions ?? []).filter(function_ => function_.qualifiedName !== method.qualifiedName)];
+
+        return method;
     }
 
     // Declarations

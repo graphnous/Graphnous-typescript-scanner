@@ -89,7 +89,14 @@ export async function providePackages(
     let usesNode = declared.has("@types/node");
 
     for (const path of sourcePaths) {
-        for (const name of importedPackages(readFileSync(join(targetPath, path), "utf8"))) {
+        const content = readFileSync(join(targetPath, path), "utf8");
+
+        // Of a Vue single-file component, its scripts
+        const code = path.endsWith(".vue")
+            ? [...content.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)].map(match => match[1]).join("\n")
+            : content;
+
+        for (const name of importedPackages(code)) {
             if (declared.has(name)) {
                 wanted.push({ name, range: declared.get(name) });
             } else if (NODE_BUILTINS.has(name)) {

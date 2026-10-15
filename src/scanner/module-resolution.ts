@@ -66,6 +66,7 @@ export class ModuleResolver {
         }
 
         const config = this.configFor(containingFile);
+
         const resolved = ts.resolveModuleName(specifier, containingFile, config.options, this.host, config.modules, redirected, mode);
 
         if (resolved.resolvedModule || this.fallback === undefined || isRelative(specifier)) {
