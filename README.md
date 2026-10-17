@@ -56,6 +56,15 @@ node build/scanner.js --path . --target . --output scan-result.json
   file: its calls, with their arguments, its field accesses and its type
   uses, resolved to the name of what they refer to. What cannot be resolved
   is kept as written, with `resolved` set to `false`.
+- The values of constants: of `const` variables and `readonly` properties
+  with an initializer, and of the arguments of calls, JSX attributes and
+  decorators that are constant expressions, as JavaScript computes them,
+  e.g. `orders.created` for `Topics.CREATED`, `` `${PREFIX}created` `` or a
+  string enum member such as `Topic.Created`. Properties of objects
+  declared `as const` are known by their types. Constants whose name
+  contains `password`, `passwd`, `secret`, `token`, `credential`, `apikey`,
+  `accesskey`, `privatekey` or `authorization`, and values with a url with a
+  password, a `password=` setting or a private key, are left out.
 
 Imports resolve as the project resolves them: with the path aliases of the
 `tsconfig.json` or `jsconfig.json` nearest to each file, such as
